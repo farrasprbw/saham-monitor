@@ -4,14 +4,12 @@ import json
 import requests
 from fastmcp import Client
 
-# ========== 1. Konfigurasi tampilan tiap zona ==========
 ZONE_STYLE = {
     "watch":  {"emoji": "🔵", "label": "ZONA PANTAU",   "prefix": "Informasi"},
     "action": {"emoji": "🟡", "label": "ZONA AKSI",     "prefix": "Perhatian"},
     "panic":  {"emoji": "🔴", "label": "ZONA DARURAT",  "prefix": "URGENT"},
 }
 
-# ========== 2. Fungsi Kirim Notifikasi Telegram ==========
 def send_telegram(message: str):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
@@ -34,7 +32,6 @@ def send_telegram(message: str):
     except Exception as e:
         print(f"❌ Notifikasi Telegram error: {e}")
 
-# ========== 3. Fungsi Cek Satu Rule ==========
 def check_rule(rule: dict, current_price: float):
     direction = rule["direction"]
     threshold = rule["threshold"]
@@ -46,7 +43,6 @@ def check_rule(rule: dict, current_price: float):
 
     return False, ""
 
-# ========== 4. Fungsi Utama Monitoring ==========
 async def main():
     with open("watchlist.json", "r", encoding="utf-8") as f:
         watchlist = json.load(f)
@@ -63,7 +59,6 @@ async def main():
     }
 
     async with Client(server_params) as client:
-        # ========== DEBUG: Lihat tool yang tersedia ==========
         print("🔧 Tool yang tersedia:")
         try:
             tools = await client.list_tools()
@@ -72,20 +67,20 @@ async def main():
         except Exception as e:
             print(f"   ⚠️ Gagal list tools: {e}")
 
-        # ========== DEBUG: Cari format ticker yang benar ==========
-        print("\n🔎 Mencari saham 'BBCA'...")
+        # Debug: test get_stock_analysis untuk BBCA
+        print("\n🧪 TEST: get_stock_analysis untuk BBCA")
         try:
-            search_result = await client.call_tool("search_stocks", {"query": "BBCA"})
-            print(f"Hasil search: {str(search_result)[:800]}")
+            test_result = await client.call_tool("get_stock_analysis", {"ticker": "BBCA"})
+            print(f"Hasil: {str(test_result)[:1500]}")
         except Exception as e:
-            print(f"⚠️ Search error: {e}")
+            print(f"⚠️ Test error: {e}")
 
-        print("\n🔎 Cek saham yang tersedia...")
+        print("\n🧪 TEST: get_historical_data untuk BBCA")
         try:
-            avail_result = await client.call_tool("get_available_stocks", {})
-            print(f"Saham tersedia (5 pertama): {str(avail_result)[:800]}")
+            hist_result = await client.call_tool("get_historical_data", {"ticker": "BBCA"})
+            print(f"Hasil: {str(hist_result)[:1500]}")
         except Exception as e:
-            print(f"⚠️ Get available error: {e}")
+            print(f"⚠️ Test error: {e}")
 
         # ========== Loop saham ==========
         for item in watchlist:
@@ -95,12 +90,12 @@ async def main():
             print(f"\n🔍 Memeriksa {ticker}...")
 
             try:
-                result = await client.call_tool("get_stock_info", {"ticker": ticker})
+                result = await client.call_tool("get_stock_analysis", {"ticker": ticker})
             except Exception as e:
                 print(f"⚠️ Error memanggil tool untuk {ticker}: {e}")
                 continue
 
-            # Parsing respons
+            # Parsing
             data = None
             if hasattr(result, 'structured_content') and result.structured_content:
                 data = result.structured_content
@@ -120,27 +115,36 @@ async def main():
                 print(f"⚠️ Tidak ada data untuk {ticker}, lewati")
                 continue
 
-            # Cek apakah success
             if isinstance(data, dict) and data.get("success") is False:
                 print(f"⚠️ Server menolak {ticker}: {data.get('error', 'unknown')}")
                 continue
 
-            # Coba beberapa kemungkinan struktur respons
-            stock = None
-            if isinstance(data, dict):
-                if data.get("success") and "data" in data:
-                    stock = data["data"]
-                elif "price" in data:
-                    stock = data
-                elif "data" in data:
-                    stock = data["data"]
+            print(f"   📦 Struktur data: {str(data)[:500]}")
 
+            # Cari harga
+            stock = data.get("data") if isinstance(data, dict) else None
             if not stock:
-                print(f"⚠️ Struktur data tidak dikenal untuk {ticker}: {str(data)[:300]}")
+                print(f"⚠️ Tidak ada field 'data' untuk {ticker}")
                 continue
 
-            current_price = stock.get("price") or stock.get("last") or stock.get("close")
-            stock_name = stock.get("name") or stock.get("company_name") or ticker
+            # Coba berbagai kemungkinan field harga
+            current_price = None
+            for key in ["price", "last", "close", "currentPrice", "lastPrice"]:
+                if isinstance(stock, dict) and stock.get(key):
+                    current_price = stock[key]
+                    break
+
+            # Kalau tidak ada, coba dari prices array
+            if current_price is None and isinstance(stock, dict):
+                prices = stock.get("prices") or stock.get("historical") or stock.get("data")
+                if isinstance(prices, list) and len(prices) > 0:
+                    last = prices[-1]
+                    if isinstance(last, dict):
+                        current_price = last.get("close") or last.get("price")
+
+            stock_name = ticker
+            if isinstance(stock, dict):
+                stock_name = stock.get("name") or stock.get("company_name") or stock.get("ticker") or ticker
 
             if current_price is None:
                 print(f"⚠️ Harga {ticker} tidak tersedia, lewati")
@@ -154,7 +158,7 @@ async def main():
 
             print(f"   {stock_name} ({ticker}): Rp {current_price:,.0f}")
 
-            # Cek semua rule
+            # Cek rules
             hit_rules = []
             for rule in rules:
                 hit, condition_text = check_rule(rule, current_price)

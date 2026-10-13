@@ -19,11 +19,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Node.js (untuk npx)
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
       - name: Install dependensi Python
         run: pip install -r requirements.txt
 

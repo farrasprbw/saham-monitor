@@ -53,7 +53,6 @@ async def main():
 
     print(f"📊 Mulai memantau {len(watchlist)} saham...")
 
-    # Konfigurasi server MCP — dibungkus dalam "mcpServers"
     server_params = {
         "mcpServers": {
             "idx": {
@@ -64,7 +63,7 @@ async def main():
     }
 
     async with Client(server_params) as client:
-        # ========== DEBUG: Lihat tool apa saja yang tersedia ==========
+        # ========== DEBUG: Lihat tool yang tersedia ==========
         print("🔧 Tool yang tersedia:")
         try:
             tools = await client.list_tools()
@@ -73,6 +72,21 @@ async def main():
         except Exception as e:
             print(f"   ⚠️ Gagal list tools: {e}")
 
+        # ========== DEBUG: Cari format ticker yang benar ==========
+        print("\n🔎 Mencari saham 'BBCA'...")
+        try:
+            search_result = await client.call_tool("search_stocks", {"query": "BBCA"})
+            print(f"Hasil search: {str(search_result)[:800]}")
+        except Exception as e:
+            print(f"⚠️ Search error: {e}")
+
+        print("\n🔎 Cek saham yang tersedia...")
+        try:
+            avail_result = await client.call_tool("get_available_stocks", {})
+            print(f"Saham tersedia (5 pertama): {str(avail_result)[:800]}")
+        except Exception as e:
+            print(f"⚠️ Get available error: {e}")
+
         # ========== Loop saham ==========
         for item in watchlist:
             ticker = item["ticker"]
@@ -80,7 +94,6 @@ async def main():
 
             print(f"\n🔍 Memeriksa {ticker}...")
 
-            # Panggil tool get_stock_info (tanpa prefix)
             try:
                 result = await client.call_tool("get_stock_info", {"ticker": ticker})
             except Exception as e:
@@ -100,12 +113,16 @@ async def main():
                             data = json.loads(content.text)
                             break
                         except:
-                            # Kalau bukan JSON, mungkin teks biasa
-                            print(f"   📄 Respons: {content.text[:200]}")
+                            print(f"   📄 Respons mentah: {content.text[:300]}")
                             pass
 
             if not data:
                 print(f"⚠️ Tidak ada data untuk {ticker}, lewati")
+                continue
+
+            # Cek apakah success
+            if isinstance(data, dict) and data.get("success") is False:
+                print(f"⚠️ Server menolak {ticker}: {data.get('error', 'unknown')}")
                 continue
 
             # Coba beberapa kemungkinan struktur respons
@@ -119,7 +136,7 @@ async def main():
                     stock = data["data"]
 
             if not stock:
-                print(f"⚠️ Struktur data tidak dikenal untuk {ticker}: {str(data)[:200]}")
+                print(f"⚠️ Struktur data tidak dikenal untuk {ticker}: {str(data)[:300]}")
                 continue
 
             current_price = stock.get("price") or stock.get("last") or stock.get("close")
@@ -129,7 +146,6 @@ async def main():
                 print(f"⚠️ Harga {ticker} tidak tersedia, lewati")
                 continue
 
-            # Konversi ke float kalau string
             try:
                 current_price = float(current_price)
             except (ValueError, TypeError):
@@ -138,7 +154,7 @@ async def main():
 
             print(f"   {stock_name} ({ticker}): Rp {current_price:,.0f}")
 
-            # Cek semua rule untuk saham ini
+            # Cek semua rule
             hit_rules = []
             for rule in rules:
                 hit, condition_text = check_rule(rule, current_price)
@@ -149,7 +165,6 @@ async def main():
                 print(f"   ⏳ Tidak ada rule yang terpicu")
                 continue
 
-            # Kirim notifikasi untuk setiap rule yang terpicu
             for zone, condition_text in hit_rules:
                 style = ZONE_STYLE.get(zone, ZONE_STYLE["watch"])
                 message = (

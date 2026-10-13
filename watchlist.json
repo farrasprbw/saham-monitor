@@ -1,0 +1,57 @@
+[
+  {
+    "ticker": "BBCA",
+    "rules": [
+      { "zone": "watch",  "direction": "decrease", "threshold": 5850 },
+      { "zone": "watch",  "direction": "increase", "threshold": 6300 },
+      { "zone": "action", "direction": "decrease", "threshold": 5700 },
+      { "zone": "action", "direction": "increase", "threshold": 6600 },
+      { "zone": "panic",  "direction": "decrease", "threshold": 5400 },
+      { "zone": "panic",  "direction": "increase", "threshold": 7200 }
+    ]
+  },
+  {
+    "ticker": "BBRI",
+    "rules": [
+      { "zone": "watch",  "direction": "decrease", "threshold": 4300 },
+      { "zone": "watch",  "direction": "increase", "threshold": 4700 },
+      { "zone": "action", "direction": "decrease", "threshold": 4200 },
+      { "zone": "action", "direction": "increase", "threshold": 4900 },
+      { "zone": "panic",  "direction": "decrease", "threshold": 4000 },
+      { "zone": "panic",  "direction": "increase", "threshold": 5200 }
+    ]
+  },
+  {
+    "ticker": "BMRI",
+    "rules": [
+      { "zone": "watch",  "direction": "decrease", "threshold": 5800 },
+      { "zone": "watch",  "direction": "increase", "threshold": 6300 },
+      { "zone": "action", "direction": "decrease", "threshold": 5700 },
+      { "zone": "action", "direction": "increase", "threshold": 6500 },
+      { "zone": "panic",  "direction": "decrease", "threshold": 5400 },
+      { "zone": "panic",  "direction": "increase", "threshold": 6900 }
+    ]
+  },
+  {
+    "ticker": "TLKM",
+    "rules": [
+      { "zone": "watch",  "direction": "decrease", "threshold": 2900 },
+      { "zone": "watch",  "direction": "increase", "threshold": 3200 },
+      { "zone": "action", "direction": "decrease", "threshold": 2800 },
+      { "zone": "action", "direction": "increase", "threshold": 3400 },
+      { "zone": "panic",  "direction": "decrease", "threshold": 2600 },
+      { "zone": "panic",  "direction": "increase", "threshold": 3600 }
+    ]
+  },
+  {
+    "ticker": "ASII",
+    "rules": [
+      { "zone": "watch",  "direction": "decrease", "threshold": 4700 },
+      { "zone": "watch",  "direction": "increase", "threshold": 5100 },
+      { "zone": "action", "direction": "decrease", "threshold": 4600 },
+      { "zone": "action", "direction": "increase", "threshold": 5300 },
+      { "zone": "panic",  "direction": "decrease", "threshold": 4400 },
+      { "zone": "panic",  "direction": "increase", "threshold": 5600 }
+    ]
+  }
+]

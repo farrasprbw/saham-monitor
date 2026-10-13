@@ -4,12 +4,17 @@ import json
 import requests
 import yfinance as yf
 
+# ========== 1. Konfigurasi tampilan tiap zona ==========
 ZONE_STYLE = {
     "watch":  {"emoji": "🔵", "label": "ZONA PANTAU",   "prefix": "Informasi"},
     "action": {"emoji": "🟡", "label": "ZONA AKSI",     "prefix": "Perhatian"},
     "panic":  {"emoji": "🔴", "label": "ZONA DARURAT",  "prefix": "URGENT"},
 }
 
+# Prioritas zona — makin tinggi, makin urgent
+ZONE_PRIORITY = {"panic": 3, "action": 2, "watch": 1}
+
+# ========== 2. Fungsi Kirim Notifikasi Telegram ==========
 def send_telegram(message: str):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
@@ -32,6 +37,7 @@ def send_telegram(message: str):
     except Exception as e:
         print(f"❌ Notifikasi Telegram error: {e}")
 
+# ========== 3. Fungsi Cek Satu Rule ==========
 def check_rule(rule: dict, current_price: float):
     direction = rule["direction"]
     threshold = rule["threshold"]
@@ -43,16 +49,15 @@ def check_rule(rule: dict, current_price: float):
 
     return False, ""
 
+# ========== 4. Fungsi Ambil Harga dari Yahoo Finance ==========
 def get_stock_price(ticker: str):
     """Ambil harga saham dari Yahoo Finance. Return (price, name) atau (None, None)."""
-    # Saham IDX pakai suffix .JK
     yf_ticker = f"{ticker}.JK"
 
     try:
         stock = yf.Ticker(yf_ticker)
         info = stock.info
 
-        # Coba beberapa field harga
         price = (
             info.get("currentPrice") or
             info.get("regularMarketPrice") or
@@ -61,7 +66,6 @@ def get_stock_price(ticker: str):
         name = info.get("longName") or info.get("shortName") or ticker
 
         if price is None:
-            # Fallback: ambil dari history
             hist = stock.history(period="1d")
             if not hist.empty:
                 price = float(hist["Close"].iloc[-1])
@@ -71,6 +75,7 @@ def get_stock_price(ticker: str):
         print(f"   ⚠️ Error yfinance untuk {ticker}: {e}")
         return None, None
 
+# ========== 5. Fungsi Utama Monitoring ==========
 async def main():
     with open("watchlist.json", "r", encoding="utf-8") as f:
         watchlist = json.load(f)
@@ -97,7 +102,7 @@ async def main():
 
         print(f"   {stock_name} ({ticker}): Rp {current_price:,.0f}")
 
-        # Cek semua rule
+        # ========== Cek semua rule, kumpulkan yang terpicu ==========
         hit_rules = []
         for rule in rules:
             hit, condition_text = check_rule(rule, current_price)
@@ -108,17 +113,28 @@ async def main():
             print(f"   ⏳ Tidak ada rule yang terpicu")
             continue
 
-        for zone, condition_text in hit_rules:
-            style = ZONE_STYLE.get(zone, ZONE_STYLE["watch"])
-            message = (
-                f"{style['emoji']} *{style['label']}*\n"
-                f"{style['prefix']} — {stock_name} ({ticker})\n\n"
-                f"💰 Harga saat ini: Rp {current_price:,.0f}\n"
-                f"🎯 Kondisi: {condition_text}\n\n"
-                f"⏰ Segera cek aplikasi sekuritas Anda."
-            )
-            send_telegram(message)
-            print(f"   ✅ Rule [{zone}] terpicu, notifikasi dikirim")
+        # ========== Hanya kirim SATU notifikasi — zona paling urgent ==========
+        hit_rules.sort(key=lambda x: ZONE_PRIORITY.get(x[0], 0), reverse=True)
+
+        zone, condition_text = hit_rules[0]  # Ambil yang paling urgent
+        style = ZONE_STYLE.get(zone, ZONE_STYLE["watch"])
+
+        # Info tambahan: berapa zona yang terlewati
+        zones_passed = [z for z, _ in hit_rules]
+        extra_info = ""
+        if len(hit_rules) > 1:
+            extra_info = f"\n📊 Melewati {len(hit_rules)} zona: {', '.join(zones_passed)}"
+
+        message = (
+            f"{style['emoji']} *{style['label']}*\n"
+            f"{style['prefix']} — {stock_name} ({ticker})\n\n"
+            f"💰 Harga saat ini: Rp {current_price:,.0f}\n"
+            f"🎯 Kondisi: {condition_text}"
+            f"{extra_info}\n\n"
+            f"⏰ Segera cek aplikasi sekuritas Anda."
+        )
+        send_telegram(message)
+        print(f"   ✅ Notifikasi [{zone}] dikirim (total {len(hit_rules)} zona terpicu)")
 
     print("\n✅ Selesai memeriksa semua saham.")
 

@@ -64,20 +64,34 @@ async def main():
     }
 
     async with Client(server_params) as client:
+        # ========== DEBUG: Lihat tool apa saja yang tersedia ==========
+        print("🔧 Tool yang tersedia:")
+        try:
+            tools = await client.list_tools()
+            for tool in tools:
+                print(f"   - {tool.name}")
+        except Exception as e:
+            print(f"   ⚠️ Gagal list tools: {e}")
+
+        # ========== Loop saham ==========
         for item in watchlist:
             ticker = item["ticker"]
             rules = item.get("rules", [])
 
             print(f"\n🔍 Memeriksa {ticker}...")
 
-            # Panggil tool dengan prefix "idx_"
-            result = await client.call_tool("idx_get_stock_info", {"ticker": ticker})
+            # Panggil tool get_stock_info (tanpa prefix)
+            try:
+                result = await client.call_tool("get_stock_info", {"ticker": ticker})
+            except Exception as e:
+                print(f"⚠️ Error memanggil tool untuk {ticker}: {e}")
+                continue
 
             # Parsing respons
             data = None
-            if hasattr(result, 'structured_content'):
+            if hasattr(result, 'structured_content') and result.structured_content:
                 data = result.structured_content
-            elif hasattr(result, 'data'):
+            elif hasattr(result, 'data') and result.data:
                 data = result.data
             elif hasattr(result, 'content'):
                 for content in result.content:
@@ -86,21 +100,43 @@ async def main():
                             data = json.loads(content.text)
                             break
                         except:
+                            # Kalau bukan JSON, mungkin teks biasa
+                            print(f"   📄 Respons: {content.text[:200]}")
                             pass
 
-            if not data or not data.get("success"):
-                print(f"⚠️ Gagal mengambil data {ticker}, lewati")
+            if not data:
+                print(f"⚠️ Tidak ada data untuk {ticker}, lewati")
                 continue
 
-            stock = data.get("data", {})
-            current_price = stock.get("price")
-            stock_name = stock.get("name", ticker)
+            # Coba beberapa kemungkinan struktur respons
+            stock = None
+            if isinstance(data, dict):
+                if data.get("success") and "data" in data:
+                    stock = data["data"]
+                elif "price" in data:
+                    stock = data
+                elif "data" in data:
+                    stock = data["data"]
+
+            if not stock:
+                print(f"⚠️ Struktur data tidak dikenal untuk {ticker}: {str(data)[:200]}")
+                continue
+
+            current_price = stock.get("price") or stock.get("last") or stock.get("close")
+            stock_name = stock.get("name") or stock.get("company_name") or ticker
 
             if current_price is None:
                 print(f"⚠️ Harga {ticker} tidak tersedia, lewati")
                 continue
 
-            print(f"   {stock_name} ({ticker}): Rp {current_price:,}")
+            # Konversi ke float kalau string
+            try:
+                current_price = float(current_price)
+            except (ValueError, TypeError):
+                print(f"⚠️ Harga {ticker} bukan angka: {current_price}")
+                continue
+
+            print(f"   {stock_name} ({ticker}): Rp {current_price:,.0f}")
 
             # Cek semua rule untuk saham ini
             hit_rules = []
@@ -119,7 +155,7 @@ async def main():
                 message = (
                     f"{style['emoji']} *{style['label']}*\n"
                     f"{style['prefix']} — {stock_name} ({ticker})\n\n"
-                    f"💰 Harga saat ini: Rp {current_price:,}\n"
+                    f"💰 Harga saat ini: Rp {current_price:,.0f}\n"
                     f"🎯 Kondisi: {condition_text}\n\n"
                     f"⏰ Segera cek aplikasi sekuritas Anda."
                 )

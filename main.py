@@ -4,20 +4,22 @@ import json
 import requests
 from fastmcp import Client
 
+# ========== 1. Konfigurasi tampilan tiap zona ==========
 ZONE_STYLE = {
     "watch":  {"emoji": "🔵", "label": "ZONA PANTAU",   "prefix": "Informasi"},
     "action": {"emoji": "🟡", "label": "ZONA AKSI",     "prefix": "Perhatian"},
     "panic":  {"emoji": "🔴", "label": "ZONA DARURAT",  "prefix": "URGENT"},
 }
 
+# ========== 2. Fungsi Kirim Notifikasi Telegram ==========
 def send_telegram(message: str):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-    
+
     if not token or not chat_id:
         print("⚠️ Variabel lingkungan Telegram tidak diatur, lewati notifikasi")
         return
-    
+
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     try:
         response = requests.post(
@@ -32,37 +34,46 @@ def send_telegram(message: str):
     except Exception as e:
         print(f"❌ Notifikasi Telegram error: {e}")
 
+# ========== 3. Fungsi Cek Satu Rule ==========
 def check_rule(rule: dict, current_price: float):
     direction = rule["direction"]
     threshold = rule["threshold"]
-    
+
     if direction == "decrease" and current_price < threshold:
         return True, f"turun melewati Rp {threshold:,}"
     if direction == "increase" and current_price > threshold:
         return True, f"naik melewati Rp {threshold:,}"
-    
+
     return False, ""
 
+# ========== 4. Fungsi Utama Monitoring ==========
 async def main():
     with open("watchlist.json", "r", encoding="utf-8") as f:
         watchlist = json.load(f)
-    
+
     print(f"📊 Mulai memantau {len(watchlist)} saham...")
-    
+
+    # Konfigurasi server MCP — dibungkus dalam "mcpServers"
     server_params = {
-        "command": "npx",
-        "args": ["-y", "idx-mcp-server@latest"]
+        "mcpServers": {
+            "idx": {
+                "command": "npx",
+                "args": ["-y", "idx-mcp-server@latest"]
+            }
+        }
     }
-    
+
     async with Client(server_params) as client:
         for item in watchlist:
             ticker = item["ticker"]
             rules = item.get("rules", [])
-            
+
             print(f"\n🔍 Memeriksa {ticker}...")
-            
-            result = await client.call_tool("get_stock_info", {"ticker": ticker})
-            
+
+            # Panggil tool dengan prefix "idx_"
+            result = await client.call_tool("idx_get_stock_info", {"ticker": ticker})
+
+            # Parsing respons
             data = None
             if hasattr(result, 'structured_content'):
                 data = result.structured_content
@@ -76,31 +87,33 @@ async def main():
                             break
                         except:
                             pass
-            
+
             if not data or not data.get("success"):
                 print(f"⚠️ Gagal mengambil data {ticker}, lewati")
                 continue
-            
+
             stock = data.get("data", {})
             current_price = stock.get("price")
             stock_name = stock.get("name", ticker)
-            
+
             if current_price is None:
                 print(f"⚠️ Harga {ticker} tidak tersedia, lewati")
                 continue
-            
+
             print(f"   {stock_name} ({ticker}): Rp {current_price:,}")
-            
+
+            # Cek semua rule untuk saham ini
             hit_rules = []
             for rule in rules:
                 hit, condition_text = check_rule(rule, current_price)
                 if hit:
                     hit_rules.append((rule["zone"], condition_text))
-            
+
             if not hit_rules:
                 print(f"   ⏳ Tidak ada rule yang terpicu")
                 continue
-            
+
+            # Kirim notifikasi untuk setiap rule yang terpicu
             for zone, condition_text in hit_rules:
                 style = ZONE_STYLE.get(zone, ZONE_STYLE["watch"])
                 message = (
@@ -112,7 +125,7 @@ async def main():
                 )
                 send_telegram(message)
                 print(f"   ✅ Rule [{zone}] terpicu, notifikasi dikirim")
-    
+
     print("\n✅ Selesai memeriksa semua saham.")
 
 if __name__ == "__main__":

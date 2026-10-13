@@ -26,7 +26,7 @@ Bisa juga dijalankan manual via tab **Actions** → **Run workflow**.
 
 **Edit langsung di Google Sheets** — tidak perlu commit ke repositori.
 
-Spreadsheet: `[ISI LINK GOOGLE SHEETS ANDA DI SINI]`
+Spreadsheet: `https://docs.google.com/spreadsheets/d/1yHSEchupXWJoEysKrvD8m77SxcKcPz6fgSr3v92eHTM/edit`
 
 ### Format Kolom
 

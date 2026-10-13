@@ -1,57 +1,38 @@
 [
   {
     "ticker": "BBCA",
+    "reference_price": 5925,
     "rules": [
-      { "zone": "watch",  "direction": "decrease", "threshold": 5850 },
-      { "zone": "watch",  "direction": "increase", "threshold": 6300 },
-      { "zone": "action", "direction": "decrease", "threshold": 5700 },
-      { "zone": "action", "direction": "increase", "threshold": 6600 },
-      { "zone": "panic",  "direction": "decrease", "threshold": 5400 },
-      { "zone": "panic",  "direction": "increase", "threshold": 7200 }
+      { "zone": "watch",  "direction": "decrease", "pct": -2 },
+      { "zone": "watch",  "direction": "increase", "pct": 2 },
+      { "zone": "action", "direction": "decrease", "pct": -5 },
+      { "zone": "action", "direction": "increase", "pct": 5 },
+      { "zone": "panic",  "direction": "decrease", "pct": -8 },
+      { "zone": "panic",  "direction": "increase", "pct": 8 }
     ]
   },
   {
     "ticker": "BBRI",
+    "reference_price": 3080,
     "rules": [
-      { "zone": "watch",  "direction": "decrease", "threshold": 4300 },
-      { "zone": "watch",  "direction": "increase", "threshold": 4700 },
-      { "zone": "action", "direction": "decrease", "threshold": 4200 },
-      { "zone": "action", "direction": "increase", "threshold": 4900 },
-      { "zone": "panic",  "direction": "decrease", "threshold": 4000 },
-      { "zone": "panic",  "direction": "increase", "threshold": 5200 }
+      { "zone": "watch",  "direction": "decrease", "pct": -2 },
+      { "zone": "watch",  "direction": "increase", "pct": 2 },
+      { "zone": "action", "direction": "decrease", "pct": -5 },
+      { "zone": "action", "direction": "increase", "pct": 5 },
+      { "zone": "panic",  "direction": "decrease", "pct": -8 },
+      { "zone": "panic",  "direction": "increase", "pct": 8 }
     ]
   },
   {
     "ticker": "BMRI",
+    "reference_price": 3990,
     "rules": [
-      { "zone": "watch",  "direction": "decrease", "threshold": 5800 },
-      { "zone": "watch",  "direction": "increase", "threshold": 6300 },
-      { "zone": "action", "direction": "decrease", "threshold": 5700 },
-      { "zone": "action", "direction": "increase", "threshold": 6500 },
-      { "zone": "panic",  "direction": "decrease", "threshold": 5400 },
-      { "zone": "panic",  "direction": "increase", "threshold": 6900 }
-    ]
-  },
-  {
-    "ticker": "TLKM",
-    "rules": [
-      { "zone": "watch",  "direction": "decrease", "threshold": 2900 },
-      { "zone": "watch",  "direction": "increase", "threshold": 3200 },
-      { "zone": "action", "direction": "decrease", "threshold": 2800 },
-      { "zone": "action", "direction": "increase", "threshold": 3400 },
-      { "zone": "panic",  "direction": "decrease", "threshold": 2600 },
-      { "zone": "panic",  "direction": "increase", "threshold": 3600 }
-    ]
-  },
-  {
-    "ticker": "ASII",
-    "rules": [
-      { "zone": "watch",  "direction": "decrease", "threshold": 4700 },
-      { "zone": "watch",  "direction": "increase", "threshold": 5100 },
-      { "zone": "action", "direction": "decrease", "threshold": 4600 },
-      { "zone": "action", "direction": "increase", "threshold": 5300 },
-      { "zone": "panic",  "direction": "decrease", "threshold": 4400 },
-      { "zone": "panic",  "direction": "increase", "threshold": 5600 }
+      { "zone": "watch",  "direction": "decrease", "pct": -2 },
+      { "zone": "watch",  "direction": "increase", "pct": 2 },
+      { "zone": "action", "direction": "decrease", "pct": -5 },
+      { "zone": "action", "direction": "increase", "pct": 5 },
+      { "zone": "panic",  "direction": "decrease", "pct": -8 },
+      { "zone": "panic",  "direction": "increase", "pct": 8 }
     ]
   }
 ]

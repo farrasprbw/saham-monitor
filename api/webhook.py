@@ -1,8 +1,6 @@
 import os
 import json
 import asyncio
-import time
-import random
 import requests
 from flask import Flask, request, jsonify
 from telegram import Update, Bot
@@ -14,7 +12,6 @@ ALLOWED_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GIST_ID = os.environ.get("GIST_ID")
 GIST_ID_ALL_STOCKS = os.environ.get("GIST_ID_ALL_STOCKS")
 GIST_TOKEN = os.environ.get("GIST_TOKEN")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 # ========== Baca Gist ==========
 def read_gist_file(gist_id: str, filename: str):
@@ -51,7 +48,6 @@ def write_watchlist(watchlist):
         raise Exception(f"Gagal tulis Gist: {r.status_code}")
 
 def load_all_stocks():
-    """Return list of {ticker, name}."""
     data = read_gist_file(GIST_ID_ALL_STOCKS, "all_stocks.json")
     stocks = []
     for item in data:
@@ -61,7 +57,7 @@ def load_all_stocks():
             stocks.append({"ticker": item, "name": item})
     return stocks
 
-# ========== Cari saham ==========
+# ========== Helper ==========
 def find_item(watchlist, ticker):
     for item in watchlist:
         if item["ticker"].upper() == ticker.upper():
@@ -69,27 +65,20 @@ def find_item(watchlist, ticker):
     return None
 
 def search_in_database(stocks: list, query: str):
-    """Cari saham berdasarkan ticker atau nama. Return list of match."""
     q = query.upper().strip()
     matches = []
-
     for s in stocks:
         ticker = s["ticker"].upper()
         name = s["name"].upper()
-
         if q == ticker:
-            return [s]  # exact ticker match
-        if q in ticker:
+            return [s]
+        if q in ticker or q in name:
             matches.append(s)
-        elif q in name:
-            matches.append(s)
+    return matches[:5]
 
-    return matches[:5]  # maksimal 5 hasil
-
-# ========== Format watchlist ==========
 def format_watchlist(watchlist):
     if not watchlist:
-        return "📋 Watchlist kosong."
+        return "📋 Watchlist kosong. Tambahkan dengan `/add BBCA 5500`"
     lines = ["📋 *Watchlist:*\n"]
     for item in watchlist:
         lines.append(
@@ -100,70 +89,7 @@ def format_watchlist(watchlist):
         )
     return "\n".join(lines)
 
-# ========== Gemini: tentukan aksi ==========
-def tanya_gemini(pesan_user: str, watchlist: list) -> dict:
-    prompt = f"""Kamu adalah asisten bot saham. Pengguna mengirim pesan dalam bahasa Indonesia.
-
-Pesan pengguna: "{pesan_user}"
-
-Watchlist saat ini: {json.dumps(watchlist, ensure_ascii=False)}
-
-Tugasmu: tentukan aksi yang dimaksud pengguna. Balas HANYA dengan JSON valid, tanpa teks lain, tanpa markdown.
-
-Format JSON yang diperbolehkan:
-- {{"action": "list"}} — lihat watchlist
-- {{"action": "add", "ticker": "XXXX", "ref": 5500}} — tambah saham
-- {{"action": "remove", "ticker": "XXXX"}} — hapus saham
-- {{"action": "set_ref", "ticker": "XXXX", "ref": 5500}} — ubah harga acuan
-- {{"action": "set_zone", "ticker": "XXXX", "zone": "watch", "down": -5, "up": 10}} — ubah threshold zona
-- {{"action": "cek", "query": "kata kunci"}} — cari saham di database, cek harga, zona beli
-- {{"action": "tidak_jelas", "pesan": "penjelasan"}} — kalau tidak yakin
-
-Aturan:
-- ticker selalu 4 huruf kapital
-- Kalau pengguna minta cek saham (contoh: "cek ANTM", "bagaimana dengan Bank Mandiri"), pakai action "cek" dengan query berisi ticker atau nama
-- Kalau pengguna minta tambah saham tanpa harga, pakai "tidak_jelas" dan minta harga
-"""
-
-    models = ["gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash" "gemini-flash-latest"]
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "temperature": 0.1
-        }
-    }
-
-    last_error = None
-    for model in models:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
-        for attempt in range(2):
-            try:
-                r = requests.post(url, json=payload, timeout=20)
-                if r.status_code == 200:
-                    teks = r.json()["candidates"][0]["content"]["parts"][0]["text"]
-                    return json.loads(teks)
-                if r.status_code == 404:
-                    last_error = f"{model} tidak tersedia"
-                    break
-                if r.status_code in (429, 500, 503):
-                    last_error = f"{model} error {r.status_code}"
-                    if attempt < 1:
-                        time.sleep(1 + random.uniform(0, 1))
-                        continue
-                    break
-                raise Exception(f"Gemini error: {r.status_code} {r.text[:200]}")
-            except requests.exceptions.Timeout:
-                last_error = f"{model} timeout"
-                if attempt < 1:
-                    time.sleep(1)
-                    continue
-                break
-    raise Exception(f"Gemini gagal: {last_error}")
-
-# ========== Cek saham untuk action "cek" ==========
 def cek_saham(query: str) -> str:
-    """Cari saham, ambil harga, hitung zona beli."""
     import yfinance as yf
 
     stocks = load_all_stocks()
@@ -184,7 +110,7 @@ def cek_saham(query: str) -> str:
             hist = t.history(period="1y")
 
             if hist.empty:
-                lines.append(f"⚠️ *{ticker}* — data harga tidak tersedia.")
+                lines.append(f"⚠️ *{ticker}* — data tidak tersedia.")
                 continue
 
             current = float(hist["Close"].iloc[-1])
@@ -219,18 +145,48 @@ def cek_saham(query: str) -> str:
 
     return "\n".join(lines)
 
-# ========== Eksekusi aksi ==========
-def eksekusi_aksi(aksi: dict, watchlist: list) -> str:
-    action = aksi.get("action")
+# ========== Handler command ==========
+def handle_command(text: str) -> str:
+    parts = text.split()
+    cmd = parts[0].lower()
 
-    if action == "list":
-        return format_watchlist(watchlist)
+    # /start atau /help
+    if cmd in ("/start", "/help"):
+        return (
+            "🤖 *Bot Saham Monitor*\n\n"
+            "*Perintah yang tersedia:*\n\n"
+            "📋 `/list` — lihat watchlist\n"
+            "➕ `/add TICKER REF` — tambah saham\n"
+            "   Contoh: `/add BBCA 5500`\n"
+            "❌ `/remove TICKER` — hapus saham\n"
+            "💰 `/ref TICKER HARGA` — ubah harga acuan\n"
+            "   Contoh: `/ref BBCA 5800`\n"
+            "🎯 `/zone TICKER ZONA DOWN UP` — ubah threshold\n"
+            "   Contoh: `/zone BBCA watch -5 +10`\n"
+            "   Zona: watch / action / panic\n"
+            "🔍 `/cek TICKER` — cek harga & zona beli\n"
+            "   Contoh: `/cek ANTM`\n"
+            "🔎 `/cari NAMA` — cari saham berdasarkan nama\n"
+            "   Contoh: `/cari Bank Mandiri`"
+        )
 
-    if action == "add":
-        ticker = aksi["ticker"].upper()
-        ref = float(aksi["ref"])
+    # /list
+    if cmd == "/list":
+        return format_watchlist(read_watchlist())
+
+    # /add TICKER REF
+    if cmd == "/add":
+        if len(parts) != 3:
+            return "Format: `/add TICKER REF`\nContoh: `/add BBCA 5500`"
+        ticker = parts[1].upper()
+        try:
+            ref = float(parts[2])
+        except ValueError:
+            return "❌ REF harus angka. Contoh: `/add BBCA 5500`"
+
+        watchlist = read_watchlist()
         if find_item(watchlist, ticker):
-            return f"⚠️ {ticker} sudah ada di watchlist."
+            return f"⚠️ {ticker} sudah ada. Pakai `/ref {ticker} HARGA` untuk ubah."
         watchlist.append({
             "ticker": ticker,
             "reference_price": ref,
@@ -241,44 +197,82 @@ def eksekusi_aksi(aksi: dict, watchlist: list) -> str:
         write_watchlist(watchlist)
         return f"✅ {ticker} ditambahkan dengan ref Rp {ref:,.0f}"
 
-    if action == "remove":
-        ticker = aksi["ticker"].upper()
+    # /remove TICKER
+    if cmd == "/remove":
+        if len(parts) != 2:
+            return "Format: `/remove TICKER`\nContoh: `/remove BBRI`"
+        ticker = parts[1].upper()
+        watchlist = read_watchlist()
         new_wl = [x for x in watchlist if x["ticker"].upper() != ticker]
         if len(new_wl) == len(watchlist):
             return f"⚠️ {ticker} tidak ditemukan di watchlist."
         write_watchlist(new_wl)
-        return f"✅ {ticker} dihapus."
+        return f"✅ {ticker} dihapus dari watchlist."
 
-    if action == "set_ref":
-        ticker = aksi["ticker"].upper()
-        ref = float(aksi["ref"])
+    # /ref TICKER HARGA
+    if cmd == "/ref":
+        if len(parts) != 3:
+            return "Format: `/ref TICKER HARGA`\nContoh: `/ref BBCA 5800`"
+        ticker = parts[1].upper()
+        try:
+            ref = float(parts[2])
+        except ValueError:
+            return "❌ HARGA harus angka."
+        watchlist = read_watchlist()
         item = find_item(watchlist, ticker)
         if not item:
-            return f"⚠️ {ticker} tidak ditemukan."
+            return f"⚠️ {ticker} tidak ada. Tambah dulu dengan `/add {ticker} {parts[2]}`"
         item["reference_price"] = ref
         write_watchlist(watchlist)
         return f"✅ {ticker} ref = Rp {ref:,.0f}"
 
-    if action == "set_zone":
-        ticker = aksi["ticker"].upper()
-        zone = aksi["zone"].lower()
+    # /zone TICKER ZONA DOWN UP
+    if cmd == "/zone":
+        if len(parts) != 5:
+            return ("Format: `/zone TICKER ZONA DOWN UP`\n"
+                    "Contoh: `/zone BBCA watch -5 +10`\n"
+                    "Zona: watch / action / panic")
+        ticker = parts[1].upper()
+        zone = parts[2].lower()
         if zone not in ("watch", "action", "panic"):
             return "⚠️ Zona harus watch, action, atau panic."
+        try:
+            down = float(parts[3])
+            up = float(parts[4])
+        except ValueError:
+            return "❌ DOWN dan UP harus angka. Contoh: -5 +10"
+        watchlist = read_watchlist()
         item = find_item(watchlist, ticker)
         if not item:
-            return f"⚠️ {ticker} tidak ditemukan."
-        item[f"{zone}_down"] = float(aksi["down"])
-        item[f"{zone}_up"] = float(aksi["up"])
+            return f"⚠️ {ticker} tidak ada di watchlist."
+        item[f"{zone}_down"] = down
+        item[f"{zone}_up"] = up
         write_watchlist(watchlist)
-        return f"✅ {ticker} {zone} = {aksi['down']}% / +{aksi['up']}%"
+        return f"✅ {ticker} {zone} = {down}% / +{up}%"
 
-    if action == "cek":
-        return cek_saham(aksi["query"])
+    # /cek TICKER atau /cek NAMA
+    if cmd == "/cek":
+        if len(parts) < 2:
+            return "Format: `/cek TICKER`\nContoh: `/cek ANTM`"
+        query = " ".join(parts[1:])
+        return cek_saham(query)
 
-    if action == "tidak_jelas":
-        return f"🤔 {aksi.get('pesan', 'Saya tidak paham. Coba jelaskan lebih spesifik.')}"
+    # /cari NAMA
+    if cmd == "/cari":
+        if len(parts) < 2:
+            return "Format: `/cari NAMA`\nContoh: `/cari Bank Mandiri`"
+        query = " ".join(parts[1:])
+        stocks = load_all_stocks()
+        matches = search_in_database(stocks, query)
+        if not matches:
+            return f"❌ Tidak ada saham dengan nama '{query}'."
+        lines = ["🔎 *Hasil pencarian:*\n"]
+        for s in matches:
+            lines.append(f"• `{s['ticker']}` — {s['name']}")
+        lines.append("\nPakai `/cek TICKER` untuk lihat harga.")
+        return "\n".join(lines)
 
-    return "⚠️ Aksi tidak dikenal."
+    return f"❓ Perintah `{cmd}` tidak dikenal. Kirim `/help` untuk daftar perintah."
 
 # ========== Webhook ==========
 @app.route("/api/webhook", methods=["POST"])
@@ -299,36 +293,19 @@ def telegram_webhook():
         asyncio.run(bot.send_message(chat_id=msg.chat_id, text=t, parse_mode="Markdown"))
 
     try:
-        if text.startswith("/start") or text.startswith("/help"):
+        if not text.startswith("/"):
+            # Kalau user kirim pesan tanpa "/", arahkan ke /help
             reply(
-                "🤖 *Bot Saham Monitor*\n\n"
-                "*Cara pakai (kirim pesan bebas):*\n"
-                "• \"lihat watchlist saya\"\n"
-                "• \"tambahkan BBCA di 5500\"\n"
-                "• \"ubah harga acuan BBCA jadi 5800\"\n"
-                "• \"hapus BBRI\"\n"
-                "• \"cek ANTM\"\n"
-                "• \"bagaimana dengan Bank Mandiri?\""
+                "ℹ️ Kirim perintah dengan awalan `/`.\n\n"
+                "Contoh:\n"
+                "• `/list` — lihat watchlist\n"
+                "• `/add BBCA 5500` — tambah saham\n"
+                "• `/cek ANTM` — cek harga saham\n\n"
+                "Kirim `/help` untuk daftar lengkap."
             )
             return jsonify({"ok": True}), 200
 
-        # Command-based
-        if text.startswith("/list"):
-            reply(format_watchlist(read_watchlist()))
-            return jsonify({"ok": True}), 200
-
-        if text.startswith("/cek"):
-            parts = text.split(maxsplit=1)
-            if len(parts) < 2:
-                reply("Format: `/cek TICKER` atau `/cek Nama Saham`")
-                return jsonify({"ok": True}), 200
-            reply(cek_saham(parts[1]))
-            return jsonify({"ok": True}), 200
-
-        # Natural language
-        watchlist = read_watchlist()
-        aksi = tanya_gemini(text, watchlist)
-        balasan = eksekusi_aksi(aksi, watchlist)
+        balasan = handle_command(text)
         reply(balasan)
 
     except Exception as e:

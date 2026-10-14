@@ -1,32 +1,49 @@
-### `README.md`
+### `README.md` 
 
 ```markdown
 # 📈 Saham Monitor
 
-Bot Telegram untuk memantau saham IDX dengan analisis otomatis dan alert threshold.
+Bot Telegram untuk memantau saham IDX. Dilengkapi analisis otomatis, alert threshold, dan rekomendasi harian — semua berjalan otomatis di cloud, tanpa biaya bulanan.
 
-![Status](https://img.shields.io/badge/status-active-success)
-![Python](https://img.shields.io/badge/python-3.11-blue)
-![Platform](https://img.shields.io/badge/platform-Vercel-black)
+## 🎯 Apa Itu Saham Monitor
 
-## ✨ Fitur
+Saham Monitor adalah bot Telegram yang membantu investor jangka panjang memantau saham Indonesia (IDX). Bot ini menggabungkan:
 
-| Fitur | Deskripsi |
-|---|---|
-| 🔍 **Cek Saham** | Harga, PE, PBV, dividend, zona beli dari 100+ saham IDX |
-| 📊 **Analisis AI** | Analisis fundamental + teknikal dengan narasi dari AI |
-| ⚖️ **Bandingkan** | Bandingkan 2 saham side-by-side |
-| 📋 **Watchlist** | Kelola daftar saham pantau dengan threshold kustom |
-| 🔔 **Alert Otomatis** | Notifikasi jika harga menyentuh threshold (2x sehari) |
-| 📈 **Rekomendasi Harian** | Top 5 saham terbaik dari screening 100 saham (07:00 WIB) |
+- **Data real-time** dari Yahoo Finance
+- **Penyimpanan fleksibel** via GitHub Gist
+- **Analisis AI** dengan Groq dan Gemini sebagai fallback
+- **Penjadwalan otomatis** via GitHub Actions
 
-## 🏗️ Arsitektur
+Semua berjalan di infrastruktur gratis (Vercel + GitHub), sehingga biaya operasional **Rp 0 per bulan**.
+
+## ✨ Fitur Utama
+
+### 🔍 Cek Saham
+Cek harga terkini, PE ratio, PBV, dividend yield, dan zona beli dari 100+ saham IDX. Cukup kirim `/cek TICKER`.
+
+### 📊 Analisis AI
+Analisis mendalam yang menggabungkan data fundamental dan teknikal, dinarasikan oleh AI dalam Bahasa Indonesia. Hasilnya berupa 5 paragraf ringkas: posisi harga, valuasi, sinyal teknikal, risiko, dan kesimpulan.
+
+### ⚖️ Bandingkan Saham
+Bandingkan 2 saham side-by-side. Berguna saat ingin memilih antara dua saham di sektor yang sama (misalnya ANTM vs MDKA).
+
+### 📋 Watchlist Pribadi
+Kelola daftar saham yang ingin Anda pantau. Setiap saham punya harga acuan dan tiga zona threshold (watch, action, panic) yang bisa dikustomisasi.
+
+### 🔔 Alert Otomatis
+Bot memeriksa watchlist Anda 2x sehari (07:00 dan 16:00 WIB). Jika harga saham menyentuh threshold, Anda akan menerima notifikasi di Telegram.
+
+### 📈 Rekomendasi Harian
+Setiap pagi (07:00 WIB, Senin-Jumat), bot melakukan screening otomatis terhadap 100+ saham IDX dan mengirimkan Top 5 saham terbaik berdasarkan skor fundamental + teknikal.
+
+## 🏗️ Cara Kerja
 
 ```
 ┌─────────────────┐
 │  Telegram User  │
 └────────┬────────┘
          │
+         │ 1. Kirim command (/cek, /analisa, dll.)
          ▼
 ┌─────────────────────┐         ┌──────────────────┐
 │  Vercel (webhook)   │◄───────►│   GitHub Gist    │
@@ -34,6 +51,7 @@ Bot Telegram untuk memantau saham IDX dengan analisis otomatis dan alert thresho
 │                     │         │  - all_stocks    │
 └─────────┬───────────┘         └──────────────────┘
           │
+          │ 2. Ambil data harga + kirim ke AI
           ▼
 ┌─────────────────────┐
 │   Yahoo Finance     │
@@ -46,6 +64,22 @@ Bot Telegram untuk memantau saham IDX dengan analisis otomatis dan alert thresho
 │  - alert.yml        │  ← Alert threshold 16:00 WIB
 └─────────────────────┘
 ```
+
+### Alur Interaksi (User → Bot)
+
+1. User kirim command ke bot Telegram
+2. Telegram teruskan ke Vercel via webhook
+3. Vercel jalankan `api/webhook.py`
+4. Bot ambil data dari Yahoo Finance / Gist
+5. Kalau perlu, kirim ke Groq/Gemini untuk analisis
+6. Bot kirim balasan ke Telegram
+
+### Alur Otomatis (Tanpa Interaksi)
+
+1. GitHub Actions trigger pada jadwal cron
+2. Jalankan `suggest.py` (rekomendasi) atau `main.py` (alert)
+3. Baca data dari Gist + Yahoo Finance
+4. Kirim hasil ke Telegram
 
 ## 📁 Struktur Repositori
 
@@ -66,17 +100,17 @@ saham-monitor/
 
 ## 🤖 Perintah Bot
 
-### Kelola Watchlist
+### 📋 Kelola Watchlist
 
 | Command | Contoh | Deskripsi |
 |---|---|---|
 | `/list` | `/list` | Lihat daftar pantau |
 | `/add` | `/add BBCA 5500` | Tambah saham dengan harga acuan |
-| `/remove` | `/remove BBRI` | Hapus saham |
+| `/remove` | `/remove BBRI` | Hapus saham dari watchlist |
 | `/ref` | `/ref BBCA 5800` | Ubah harga acuan |
 | `/zone` | `/zone BBCA watch -5 +10` | Ubah threshold zona |
 
-### Cari & Cek
+### 🔍 Cari & Cek
 
 | Command | Contoh | Deskripsi |
 |---|---|---|
@@ -84,12 +118,124 @@ saham-monitor/
 | `/cek` | `/cek ANTM` | Cek harga & zona beli |
 | `/bandingkan` | `/bandingkan ANTM MDKA` | Bandingkan 2 saham |
 
-### Analisis
+### 📊 Analisis
 
 | Command | Contoh | Deskripsi |
 |---|---|---|
 | `/analisa` | `/analisa ANTM` | Analisis lengkap dengan AI |
 | `/rekomendasi` | `/rekomendasi` | Minta rekomendasi Top 5 sekarang |
+
+## 🎯 Cara Pakai
+
+### Skenario 1: Cek Saham
+
+Ingin tahu harga dan valuasi suatu saham?
+
+```
+User: /cek ANTM
+
+Bot:  📊 ANTM
+      PT Antam (Persero) Tbk
+      
+      💰 Harga: Rp 3,100
+      📈 PE: 8.4  |  PBV: 2.00
+      💵 Dividend: 6.8%
+      
+      🟢 Zona beli: Rp 2,330 – 3,150
+      🔴 Batas bawah: Rp 2,170
+      🎯 Batas atas: Rp 5,090
+      
+      📉 52w: Rp 2,283 – 4,631
+```
+
+### Skenario 2: Analisis Mendalam
+
+Ingin analisis lengkap dengan konteks?
+
+```
+User: /analisa ANTM
+
+Bot:  📊 ANALISA ANTM
+      PT Antam (Persero) Tbk
+      
+      💰 Harga: Rp 3,100
+      📈 PE: 8.4  |  PBV: 2.00
+      📉 RSI: 39.2
+      
+      ━━━ 🤖 HASIL ANALISIS ━━━
+      
+      Harga saham ANTM saat ini berada di level Rp 3.100...
+      [5 paragraf analisis]
+      
+      Bukan rekomendasi investasi.
+```
+
+### Skenario 3: Bangun Watchlist
+
+Ingin memantau saham tertentu?
+
+```
+User: /add BBCA 5925
+
+Bot:  ✅ BBCA ditambahkan!
+      
+      💰 Ref harga: Rp 5,925
+      🔵 Watch: -5% / +10%
+      🟡 Action: -10% / +20%
+      🔴 Panic: -15% / +30%
+```
+
+Kemudian sesuaikan threshold:
+
+```
+User: /zone BBCA watch -3 +8
+
+Bot:  ✅ BBCA — 🔵 watch
+      
+      ⬇️ Turun: -3%
+      ⬆️ Naik: +8%
+```
+
+### Skenario 4: Terima Alert Otomatis
+
+Jam 16:00 WIB setiap hari kerja, bot cek watchlist Anda. Kalau harga menyentuh threshold:
+
+```
+Bot:  🔴 ZONA DARURAT
+      URGENT — Bank Central Asia (BBCA)
+      
+      💰 Harga saat ini: Rp 5.500
+      🎯 turun 7.2% dari Rp 5.925
+      
+      Segera cek aplikasi sekuritas Anda.
+```
+
+### Skenario 5: Rekomendasi Harian
+
+Jam 07:00 WIB setiap hari kerja, Anda otomatis menerima:
+
+```
+Bot:  📈 REKOMENDASI TOP 5 — 14 Okt 2026
+      
+      🟢 BMRI — Bank Mandiri
+      💰 Harga: Rp 3,990
+      📊 PE: 7.5 | PBV: 1.5 | Div: 8.1%
+      🟢 Zona beli: Rp 3,750 – 4,100
+      ...
+```
+
+### Skenario 6: Minta Rekomendasi Sekarang
+
+Kalau tidak mau menunggu besok pagi:
+
+```
+User: /rekomendasi
+
+Bot:  📊 REKOMENDASI SEDANG DISIAPKAN
+      
+      Screening 100+ saham membutuhkan 3-5 menit.
+      Hasil akan dikirim ke chat ini secara otomatis.
+```
 
 ## 🚀 Setup
 
@@ -98,56 +244,42 @@ saham-monitor/
 - Akun GitHub
 - Akun Vercel (gratis)
 - Akun Telegram
-- Bot Telegram (dibuat via @BotFather)
 - Groq API Key (gratis) — https://console.groq.com
-- Gemini API Key (opsional) — https://aistudio.google.com
+- Gemini API Key (opsional, untuk fallback) — https://aistudio.google.com
 
-### 1. Fork / Clone Repositori
+### Langkah Setup
 
-```bash
-git clone https://github.com/username/saham-monitor.git
-cd saham-monitor
-```
+**1. Buat Bot Telegram**
 
-### 2. Buat Bot Telegram
+- Chat **@BotFather**, kirim `/newbot`
+- Simpan Token
+- Dapatkan Chat ID via **@userinfobot**
 
-1. Chat **@BotFather** di Telegram
-2. Kirim `/newbot`, ikuti instruksi
-3. Simpan **Token** yang diberikan
-4. Dapatkan **Chat ID** via **@userinfobot**
+**2. Buat GitHub Gist**
 
-### 3. Buat GitHub Gist
+Dua Gist (secret):
 
-Buat dua Gist (secret):
+- `watchlist.json` — isi awal `[]`
+- `all_stocks.json` — daftar saham dalam format:
+  ```json
+  [
+    {"ticker": "BBCA", "name": "Bank Central Asia"},
+    {"ticker": "BBRI", "name": "Bank Rakyat Indonesia"}
+  ]
+  ```
 
-**a. `watchlist.json`** — isi awal:
-```json
-[]
-```
+Catat Gist ID masing-masing.
 
-**b. `all_stocks.json`** — database saham:
-```json
-[
-  {"ticker": "BBCA", "name": "Bank Central Asia"},
-  {"ticker": "BBRI", "name": "Bank Rakyat Indonesia"},
-  {"ticker": "BMRI", "name": "Bank Mandiri"},
-  {"ticker": "TLKM", "name": "Telkom Indonesia"},
-  {"ticker": "ASII", "name": "Astra International"}
-]
-```
+**3. Buat Personal Access Token**
 
-Catat **Gist ID** masing-masing (dari URL).
-
-### 4. Buat Personal Access Token
-
-Buat **dua** token di https://github.com/settings/tokens:
+Buat dua token di https://github.com/settings/tokens:
 
 | Token | Scope | Untuk |
 |---|---|---|
 | `GIST_TOKEN` | `gist` | Baca/tulis Gist |
 | `GITHUB_PAT` | `workflow` | Trigger GitHub Actions |
 
-### 5. Setup GitHub Secrets
+**4. Setup GitHub Secrets**
 
 Repo → Settings → Secrets and variables → Actions:
 
@@ -159,11 +291,9 @@ Repo → Settings → Secrets and variables → Actions:
 | `GIST_ID_ALL_STOCKS` | Gist ID all_stocks |
 | `GIST_TOKEN` | Token dengan scope gist |
 
-### 6. Deploy ke Vercel
+**5. Deploy ke Vercel**
 
-1. Login Vercel dengan GitHub
-2. Import repositori `saham-monitor`
-3. Tambahkan **Environment Variables**:
+Import repositori, tambahkan Environment Variables:
 
 | Name | Value |
 |---|---|
@@ -177,10 +307,7 @@ Repo → Settings → Secrets and variables → Actions:
 | `GITHUB_REPO` | `username/saham-monitor` |
 | `GITHUB_PAT` | Token dengan scope workflow |
 
-4. Klik **Deploy**
-5. Catat URL Vercel Anda (misal `https://saham-monitor-xxx.vercel.app`)
-
-### 7. Daftarkan Webhook Telegram
+**6. Daftarkan Webhook Telegram**
 
 ```bash
 curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
@@ -188,11 +315,9 @@ curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
   -d '{"url": "https://<DOMAIN_VERCEL>/api/webhook"}'
 ```
 
-Kalau berhasil: `{"ok":true,"result":true,"description":"Webhook was set"}`
+**7. Set Command di BotFather**
 
-### 8. Set Command di BotFather
-
-Chat @BotFather → `/mybots` → pilih bot → **Edit Bot** → **Edit Commands** → paste:
+Chat @BotFather → `/mybots` → pilih bot → **Edit Bot** → **Edit Commands**:
 
 ```
 start - Menu utama
@@ -209,15 +334,9 @@ bandingkan - Bandingkan 2 saham: /bandingkan T1 T2
 rekomendasi - Rekomendasi Top 5
 ```
 
-### 9. Test
+**8. Test**
 
-Kirim ke bot Telegram:
-
-```
-/help
-```
-
-Kalau muncul menu, berarti sudah berhasil.
+Kirim `/help` ke bot Anda.
 
 ## ⏰ Jadwal Otomatis
 
@@ -226,55 +345,13 @@ Kalau muncul menu, berarti sudah berhasil.
 | `suggest.yml` | 07:00 WIB (Sen-Jum) | Rekomendasi Top 5 saham |
 | `alert.yml` | 16:00 WIB (Sen-Jum) | Alert threshold watchlist |
 
-## 🎯 Cara Pakai
-
-### Skenario 1: Cek Saham
-
-```
-User: /cek ANTM
-Bot:  📊 ANTM — PT Antam Tbk
-      💰 Rp 3,100
-      📈 PE: 8.4 | PBV: 2.00
-      ...
-```
-
-### Skenario 2: Analisis Lengkap
-
-```
-User: /analisa ANTM
-Bot:  📊 ANALISA ANTM
-      [data fundamental]
-      🤖 HASIL ANALISIS
-      [narasi analisis 5 paragraf]
-```
-
-### Skenario 3: Bangun Watchlist
-
-```
-User: /add BBCA 5925
-Bot:  ✅ BBCA ditambahkan dengan ref Rp 5.925
-
-User: /zone BBCA watch -5 +10
-Bot:  ✅ BBCA watch = -5% / +10%
-```
-
-### Skenario 4: Terima Alert
-
-```
-[Otomatis jam 16:00]
-Bot:  🔴 ZONA DARURAT
-      URGENT — Bank Central Asia (BBCA)
-      💰 Harga: Rp 5.500
-      🎯 turun 7.2% dari Rp 5.925
-```
-
 ## 🛠️ Troubleshooting
 
 | Masalah | Solusi |
 |---|---|
 | Bot tidak merespons | Cek webhook: `curl https://api.telegram.org/bot<TOKEN>/getWebhookInfo` |
 | 403 Forbidden | Chat ID di Vercel berbeda dengan Chat ID Anda |
-| 401 Unauthorized | GIST_TOKEN salah atau expired |
+| 401 Unauthorized | `GIST_TOKEN` salah atau expired |
 | Analisis gagal | Cek log Vercel, mungkin Groq/Gemini down |
 | Alert tidak dikirim | Cek jadwal cron di `.github/workflows/alert.yml` |
 | `/rekomendasi` gagal | Cek `GITHUB_PAT` punya scope `workflow` |
@@ -307,47 +384,29 @@ MIT License — bebas digunakan dan dimodifikasi.
 - [Groq](https://groq.com) — AI inference
 ```
 
-### Yang Diperbarui dari Versi Sebelumnya
+### Cara Update
 
-| Item | Perubahan |
-|---|---|
-| Fitur **Riwayat** | Dihapus dari tabel Fitur |
-| Command `/riwayat` | Dihapus dari tabel command |
-| Gist `riwayat.json` | Dihapus dari langkah setup |
-| Env `GIST_ID_RIWAYAT` | Dihapus dari Environment Variables Vercel |
-| Diagram arsitektur | Dihapus `riwayat.json` dari diagram |
-| **Troubleshooting** | Tambah baris `/rekomendasi` gagal |
-
-### Cara Update di GitHub
-
-1. Buka `README.md` di repositori
+1. Buka `README.md` di repositori GitHub
 2. Klik ikon **pensil** (Edit)
 3. Select all → Delete
 4. Paste seluruh isi di atas
 5. Commit
 
-### Verifikasi Setelah Semua Update
+### Struktur Baru README
 
-Setelah kedua file di-update, cek:
-
-| File | Status |
+| Bagian | Fokus |
 |---|---|
-| `api/webhook.py` | Sudah bersih dari riwayat |
-| `README.md` | Sudah konsisten dengan kode |
+| **Apa Itu Saham Monitor** | Overview singkat aplikasi |
+| **Fitur Utama** | 6 fitur dengan deskripsi |
+| **Cara Kerja** | Arsitektur + alur interaksi |
+| **Struktur Repositori** | File tree |
+| **Perintah Bot** | 10 command dikelompokkan |
+| **Cara Pakai** | 6 skenario penggunaan |
+| **Setup** | 8 langkah dari nol |
+| **Jadwal Otomatis** | Kapan bot berjalan sendiri |
+| **Troubleshooting** | Masalah umum |
+| **Biaya** | Semua gratis |
+| **Disclaimer** | Peringatan hukum |
+| **Credits** | Terima kasih ke layanan |
 
-Test di Telegram:
-
-1. `/help` — pastikan menu tidak menyebut `/riwayat`
-2. `/riwayat ANTM` — pastikan balas "Perintah tidak dikenal"
-3. `/analisa ANTM` — pastikan tetap berfungsi
-
-Kalau ketiganya sesuai, berarti sudah selesai dan konsisten.
-
-### Yang Bisa Dilakukan Setelah Ini
-
-1. **Coba semua command** satu per satu untuk memastikan semuanya berjalan
-2. **Bangun watchlist** dengan 3-5 saham yang Anda pahami
-3. **Gunakan selama 1 bulan** tanpa menambah fitur
-4. **Evaluasi** apa yang kurang, baru tambahkan
-
-Kalau ada yang perlu diperbaiki saat test, kirimkan log-nya.
+**Tidak ada** bagian "update terakhir" atau changelog. README sekarang berfungsi sebagai **dokumentasi lengkap** untuk siapa pun yang ingin memahami atau menggunakan bot ini.

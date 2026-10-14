@@ -3,9 +3,12 @@ import json
 import asyncio
 import time
 import random
+import urllib.parse
 import requests
 from flask import Flask, request, jsonify
-from telegram import Update, Bot
+from telegram import (
+    Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
+)
 
 app = Flask(__name__)
 
@@ -143,7 +146,116 @@ def format_watchlist(watchlist):
 
     return "\n".join(lines)
 
-def cek_saham(query: str) -> str:
+# ========== Chart Generator (QuickChart) ==========
+def generate_chart_url(ticker: str, period: str = "3mo") -> str:
+    """Generate QuickChart URL untuk line chart saham."""
+    import yfinance as yf
+
+    yf_ticker = f"{ticker}.JK"
+    t = yf.Ticker(yf_ticker)
+    hist = t.history(period=period)
+
+    if hist.empty or len(hist) < 5:
+        raise Exception("Data historis tidak cukup")
+
+    # Siapkan data
+    labels = [d.strftime("%d/%m") for d in hist.index]
+    prices = [round(float(p), 0) for p in hist["Close"]]
+
+    # Warna berdasarkan tren
+    naik = prices[-1] > prices[0]
+    color = "rgb(34, 197, 94)" if naik else "rgb(239, 68, 68)"  # hijau/merah
+    bg_color = "rgba(34, 197, 94, 0.1)" if naik else "rgba(239, 68, 68, 0.1)"
+
+    period_label = {"3mo": "3 Bulan", "6mo": "6 Bulan"}.get(period, period)
+
+    chart_config = {
+        "type": "line",
+        "data": {
+            "labels": labels,
+            "datasets": [{
+                "label": ticker,
+                "data": prices,
+                "borderColor": color,
+                "backgroundColor": bg_color,
+                "fill": True,
+                "tension": 0.3,
+                "pointRadius": 0,
+                "borderWidth": 2
+            }]
+        },
+        "options": {
+            "title": {
+                "display": True,
+                "text": f"{ticker} - {period_label}",
+                "fontSize": 16
+            },
+            "scales": {
+                "y": {"beginAtZero": False}
+            },
+            "plugins": {
+                "legend": {"display": False}
+            }
+        }
+    }
+
+    config_str = json.dumps(chart_config)
+    encoded = urllib.parse.quote(config_str)
+    return f"https://quickchart.io/chart?c={encoded}&w=800&h=400&bkg=white"
+
+# ========== Ambil info singkat untuk chart ==========
+def get_chart_info(ticker: str, period: str = "3mo"):
+    """Return dict dengan info ringkas untuk caption chart."""
+    import yfinance as yf
+
+    yf_ticker = f"{ticker}.JK"
+    t = yf.Ticker(yf_ticker)
+    hist = t.history(period=period)
+
+    if hist.empty:
+        return None
+
+    current = float(hist["Close"].iloc[-1])
+    high = float(hist["High"].max())
+    low = float(hist["Low"].min())
+    change = ((current - float(hist["Close"].iloc[0])) / float(hist["Close"].iloc[0])) * 100
+
+    return {
+        "current": current,
+        "high": high,
+        "low": low,
+        "change": change
+    }
+
+# ========== Inline keyboard ==========
+def keyboard_cek(ticker: str):
+    """Inline keyboard untuk /cek."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📊 Analisa", callback_data=f"analisa:{ticker}"),
+            InlineKeyboardButton("📈 Chart 3M", callback_data=f"chart:{ticker}:3mo"),
+        ],
+        [
+            InlineKeyboardButton("📈 Chart 6M", callback_data=f"chart:{ticker}:6mo"),
+            InlineKeyboardButton("➕ Watchlist", callback_data=f"add:{ticker}"),
+        ],
+    ])
+
+def keyboard_analisa(ticker: str):
+    """Inline keyboard untuk /analisa."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📈 Chart 3M", callback_data=f"chart:{ticker}:3mo"),
+            InlineKeyboardButton("📈 Chart 6M", callback_data=f"chart:{ticker}:6mo"),
+        ],
+        [
+            InlineKeyboardButton("➕ Watchlist", callback_data=f"add:{ticker}"),
+        ],
+    ])
+
+# ========== Cek saham (return text + keyboard) ==========
+def cek_saham_data(query: str):
+    """Return (text, keyboard) atau (text, None) kalau tidak ketemu."""
     import yfinance as yf
 
     stocks = load_all_stocks()
@@ -153,14 +265,19 @@ def cek_saham(query: str) -> str:
         return (
             f"❌ *Tidak Ditemukan*\n\n"
             f"Kata kunci: `{query}`\n\n"
-            f"Coba `/cari {query}` untuk lihat saran."
+            f"Coba `/cari {query}` untuk lihat saran.",
+            None
         )
 
     blocks = []
+    first_ticker = None
     for s in matches:
         ticker = s["ticker"]
         name = s["name"]
         yf_ticker = f"{ticker}.JK"
+
+        if first_ticker is None:
+            first_ticker = ticker
 
         try:
             t = yf.Ticker(yf_ticker)
@@ -205,7 +322,8 @@ def cek_saham(query: str) -> str:
             print(f"⚠️ cek_saham error {ticker}: {e}")
             blocks.append(f"⚠️ *{ticker}* — data tidak dapat dimuat.")
 
-    return "\n\n".join(blocks)
+    keyboard = keyboard_cek(first_ticker) if first_ticker else None
+    return "\n\n".join(blocks), keyboard
 
 # ========== Ambil data untuk analisa ==========
 def ambil_data_untuk_analisis(ticker: str):
@@ -440,15 +558,16 @@ def bandingkan_saham(ticker1: str, ticker2: str) -> str:
     )
 
 # ========== Handler command ==========
-def handle_command(text: str) -> str:
+def handle_command(text: str):
+    """Return (text, keyboard) — keyboard bisa None."""
     parts = text.split()
     cmd = parts[0].lower()
 
     if cmd in ("/start", "/help"):
-        return format_menu_utama()
+        return format_menu_utama(), None
 
     if cmd == "/list":
-        return format_watchlist(read_watchlist())
+        return format_watchlist(read_watchlist()), None
 
     if cmd == "/add":
         if len(parts) != 3:
@@ -456,17 +575,17 @@ def handle_command(text: str) -> str:
                     "Format: `/add TICKER REF`\n\n"
                     "Contoh:\n"
                     "`/add BBCA 5500`\n"
-                    "`/add ANTM 3100`")
+                    "`/add ANTM 3100`"), None
         ticker = parts[1].upper()
         try:
             ref = float(parts[2])
         except ValueError:
-            return "❌ REF harus angka. Contoh: `/add BBCA 5500`"
+            return "❌ REF harus angka. Contoh: `/add BBCA 5500`", None
 
         watchlist = read_watchlist()
         if find_item(watchlist, ticker):
             return (f"⚠️ *{ticker}* sudah ada di watchlist.\n\n"
-                    f"Pakai `/ref {ticker} HARGA` untuk ubah harga acuan.")
+                    f"Pakai `/ref {ticker} HARGA` untuk ubah harga acuan."), None
         watchlist.append({
             "ticker": ticker,
             "reference_price": ref,
@@ -483,34 +602,34 @@ def handle_command(text: str) -> str:
             f"🔴 Panic: -15% / +30%\n\n"
             f"_Ubah threshold dengan:_\n"
             f"`/zone {ticker} watch -5 +10`"
-        )
+        ), None
 
     if cmd == "/remove":
         if len(parts) != 2:
-            return "Format: `/remove TICKER`\nContoh: `/remove BBRI`"
+            return "Format: `/remove TICKER`\nContoh: `/remove BBRI`", None
         ticker = parts[1].upper()
         watchlist = read_watchlist()
         new_wl = [x for x in watchlist if x["ticker"].upper() != ticker]
         if len(new_wl) == len(watchlist):
-            return f"⚠️ *{ticker}* tidak ditemukan di watchlist."
+            return f"⚠️ *{ticker}* tidak ditemukan di watchlist.", None
         write_watchlist(new_wl)
-        return f"✅ *{ticker}* dihapus dari watchlist."
+        return f"✅ *{ticker}* dihapus dari watchlist.", None
 
     if cmd == "/ref":
         if len(parts) != 3:
-            return "Format: `/ref TICKER HARGA`\nContoh: `/ref BBCA 5800`"
+            return "Format: `/ref TICKER HARGA`\nContoh: `/ref BBCA 5800`", None
         ticker = parts[1].upper()
         try:
             ref = float(parts[2])
         except ValueError:
-            return "❌ HARGA harus angka."
+            return "❌ HARGA harus angka.", None
         watchlist = read_watchlist()
         item = find_item(watchlist, ticker)
         if not item:
-            return f"⚠️ *{ticker}* belum ada. Tambah dulu: `/add {ticker} {parts[2]}`"
+            return f"⚠️ *{ticker}* belum ada. Tambah dulu: `/add {ticker} {parts[2]}`", None
         item["reference_price"] = ref
         write_watchlist(watchlist)
-        return f"✅ *{ticker}* ref = Rp {ref:,.0f}"
+        return f"✅ *{ticker}* ref = Rp {ref:,.0f}", None
 
     if cmd == "/zone":
         if len(parts) != 5:
@@ -519,20 +638,20 @@ def handle_command(text: str) -> str:
                     "Zona: watch / action / panic\n\n"
                     "Contoh:\n"
                     "`/zone BBCA watch -5 +10`\n"
-                    "`/zone BBCA panic -15 +30`")
+                    "`/zone BBCA panic -15 +30`"), None
         ticker = parts[1].upper()
         zone = parts[2].lower()
         if zone not in ("watch", "action", "panic"):
-            return "⚠️ Zona harus: watch, action, atau panic."
+            return "⚠️ Zona harus: watch, action, atau panic.", None
         try:
             down = float(parts[3])
             up = float(parts[4])
         except ValueError:
-            return "❌ DOWN dan UP harus angka. Contoh: -5 +10"
+            return "❌ DOWN dan UP harus angka. Contoh: -5 +10", None
         watchlist = read_watchlist()
         item = find_item(watchlist, ticker)
         if not item:
-            return f"⚠️ *{ticker}* tidak ada di watchlist."
+            return f"⚠️ *{ticker}* tidak ada di watchlist.", None
         item[f"{zone}_down"] = down
         item[f"{zone}_up"] = up
         write_watchlist(watchlist)
@@ -542,32 +661,33 @@ def handle_command(text: str) -> str:
             f"✅ *{ticker}* — {emoji_zone} {zone}\n\n"
             f"⬇️ Turun: {down}%\n"
             f"⬆️ Naik: +{up}%"
-        )
+        ), None
 
     if cmd == "/cek":
         if len(parts) < 2:
-            return "Format: `/cek TICKER`\nContoh: `/cek ANTM`"
+            return "Format: `/cek TICKER`\nContoh: `/cek ANTM`", None
         query = " ".join(parts[1:])
-        return cek_saham(query)
+        text, keyboard = cek_saham_data(query)
+        return text, keyboard
 
     if cmd == "/cari":
         if len(parts) < 2:
-            return "Format: `/cari NAMA`\nContoh: `/cari Bank Mandiri`"
+            return "Format: `/cari NAMA`\nContoh: `/cari Bank Mandiri`", None
         query = " ".join(parts[1:])
         stocks = load_all_stocks()
         matches = search_in_database(stocks, query)
         if not matches:
-            return f"❌ Tidak ada saham dengan nama *{query}*."
+            return f"❌ Tidak ada saham dengan nama *{query}*.", None
         lines = [f"🔎 *HASIL PENCARIAN: {query}*\n"]
         for s in matches:
             lines.append(f"• `{s['ticker']}` — {s['name']}")
         lines.append("")
         lines.append("Pakai `/cek TICKER` untuk lihat harga.")
-        return "\n".join(lines)
+        return "\n".join(lines), None
 
     if cmd == "/analisa":
         if len(parts) < 2:
-            return "Format: `/analisa TICKER`\nContoh: `/analisa ANTM`"
+            return "Format: `/analisa TICKER`\nContoh: `/analisa ANTM`", None
         ticker = parts[1].upper()
 
         stocks = load_all_stocks()
@@ -578,29 +698,29 @@ def handle_command(text: str) -> str:
                 break
 
         if not match:
-            return f"❌ *{ticker}* tidak ada di database. Cek dengan `/cari NAMA`."
+            return f"❌ *{ticker}* tidak ada di database. Cek dengan `/cari NAMA`.", None
 
         try:
             data = ambil_data_untuk_analisis(ticker)
         except Exception as e:
             print(f"⚠️ ambil_data error: {e}")
-            return f"⚠️ Data untuk *{ticker}* tidak dapat dimuat saat ini."
+            return f"⚠️ Data untuk *{ticker}* tidak dapat dimuat saat ini.", None
 
         if not data:
-            return f"⚠️ Data untuk *{ticker}* tidak cukup untuk dianalisis."
+            return f"⚠️ Data untuk *{ticker}* tidak cukup untuk dianalisis.", None
 
         try:
             analisis = analisa_dengan_ai(data)
         except Exception as e:
             print(f"⚠️ analisa error: {e}")
             return ("⚠️ Layanan analisis sedang tidak dapat diakses.\n\n"
-                    f"Coba lagi nanti, atau pakai `/cek {ticker}` untuk data mentah.")
+                    f"Coba lagi nanti, atau pakai `/cek {ticker}` untuk data mentah."), None
 
         rsi_str = f"{data['rsi']:.1f}" if data.get("rsi") else "N/A"
         pe_str = f"{data['pe']:.1f}" if data.get('pe') else "N/A"
         pbv_str = f"{data['pbv']:.2f}" if data.get('pbv') else "N/A"
 
-        return (
+        text = (
             f"📊 *ANALISA {ticker}*\n"
             f"_{data['name']}_\n\n"
             f"💰 Harga: *Rp {data['current_price']:,.0f}*\n"
@@ -610,14 +730,15 @@ def handle_command(text: str) -> str:
             f"{analisis}\n\n"
             f"_Bukan rekomendasi investasi._"
         )
+        return text, keyboard_analisa(ticker)
 
     if cmd == "/bandingkan":
         if len(parts) != 3:
             return ("⚖️ *BANDINGKAN SAHAM*\n\n"
                     "Format: `/bandingkan T1 T2`\n\n"
                     "Contoh:\n"
-                    "`/bandingkan ANTM MDKA`")
-        return bandingkan_saham(parts[1].upper(), parts[2].upper())
+                    "`/bandingkan ANTM MDKA`"), None
+        return bandingkan_saham(parts[1].upper(), parts[2].upper()), None
 
     if cmd == "/rekomendasi":
         try:
@@ -625,16 +746,178 @@ def handle_command(text: str) -> str:
         except Exception as e:
             print(f"⚠️ trigger workflow error: {e}")
             return ("⚠️ Layanan rekomendasi sedang tidak dapat diakses.\n\n"
-                    "Coba lagi beberapa menit lagi.")
+                    "Coba lagi beberapa menit lagi."), None
         return (
             "📊 *REKOMENDASI SEDANG DISIAPKAN*\n\n"
             "Screening 100+ saham membutuhkan 3-5 menit.\n\n"
             "Hasil akan dikirim ke chat ini secara otomatis.\n"
             "Mohon tunggu ya. ☕"
-        )
+        ), None
 
     return (f"❓ Perintah `{cmd}` tidak dikenal.\n\n"
-            f"Kirim `/help` untuk lihat menu.")
+            f"Kirim `/help` untuk lihat menu."), None
+
+# ========== Handler callback query ==========
+def handle_callback(callback):
+    """Proses klik inline keyboard. Return (text, keyboard, photo_url)."""
+    data = callback.data or ""
+    parts = data.split(":")
+    action = parts[0] if parts else ""
+
+    chat_id = callback.message.chat_id
+    bot = Bot(BOT_TOKEN)
+
+    def reply_text(text, keyboard=None):
+        bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
+
+    def reply_photo(photo_url, caption):
+        bot.send_photo(
+            chat_id=chat_id,
+            photo=photo_url,
+            caption=caption,
+            parse_mode="Markdown"
+        )
+
+    try:
+        # ========== ANALISA ==========
+        if action == "analisa" and len(parts) == 2:
+            ticker = parts[1].upper()
+
+            bot.answer_callback_query(callback.id, "Menyiapkan analisis...")
+
+            try:
+                data = ambil_data_untuk_analisis(ticker)
+            except Exception as e:
+                print(f"⚠️ callback ambil_data error: {e}")
+                reply_text(f"⚠️ Data untuk *{ticker}* tidak dapat dimuat.")
+                return
+
+            if not data:
+                reply_text(f"⚠️ Data untuk *{ticker}* tidak cukup.")
+                return
+
+            try:
+                analisis = analisa_dengan_ai(data)
+            except Exception as e:
+                print(f"⚠️ callback analisa error: {e}")
+                reply_text(
+                    "⚠️ Layanan analisis sedang tidak dapat diakses.\n\n"
+                    f"Coba lagi nanti, atau pakai `/cek {ticker}`."
+                )
+                return
+
+            rsi_str = f"{data['rsi']:.1f}" if data.get("rsi") else "N/A"
+            pe_str = f"{data['pe']:.1f}" if data.get('pe') else "N/A"
+            pbv_str = f"{data['pbv']:.2f}" if data.get('pbv') else "N/A"
+
+            text = (
+                f"📊 *ANALISA {ticker}*\n"
+                f"_{data['name']}_\n\n"
+                f"💰 Harga: *Rp {data['current_price']:,.0f}*\n"
+                f"📈 PE: {pe_str}  |  PBV: {pbv_str}\n"
+                f"📉 RSI: {rsi_str}\n\n"
+                f"━━━ 🤖 *HASIL ANALISIS* ━━━\n\n"
+                f"{analisis}\n\n"
+                f"_Bukan rekomendasi investasi._"
+            )
+            reply_text(text, keyboard_analisa(ticker))
+            return
+
+        # ========== CHART ==========
+        if action == "chart" and len(parts) == 3:
+            ticker = parts[1].upper()
+            period = parts[2]  # "3mo" atau "6mo"
+
+            bot.answer_callback_query(callback.id, "Menyiapkan chart...")
+
+            try:
+                chart_url = generate_chart_url(ticker, period)
+                info = get_chart_info(ticker, period)
+            except Exception as e:
+                print(f"⚠️ chart error: {e}")
+                reply_text(f"⚠️ Chart untuk *{ticker}* tidak dapat dibuat saat ini.")
+                return
+
+            if not info:
+                reply_text(f"⚠️ Data historis *{ticker}* tidak tersedia.")
+                return
+
+            period_label = {"3mo": "3 Bulan", "6mo": "6 Bulan"}.get(period, period)
+            arah = "naik" if info["change"] > 0 else "turun"
+
+            caption = (
+                f"📈 *{ticker}* — {period_label} Terakhir\n\n"
+                f"💰 Sekarang: Rp {info['current']:,.0f}\n"
+                f"📊 Perubahan: {info['change']:+.2f}% ({arah})\n"
+                f"🔺 Tertinggi: Rp {info['high']:,.0f}\n"
+                f"🔻 Terendah: Rp {info['low']:,.0f}"
+            )
+
+            try:
+                reply_photo(chart_url, caption)
+            except Exception as e:
+                print(f"⚠️ send_photo error: {e}")
+                reply_text(f"⚠️ Chart *{ticker}* gagal dikirim. Coba lagi nanti.")
+            return
+
+        # ========== ADD WATCHLIST ==========
+        if action == "add" and len(parts) == 2:
+            ticker = parts[1].upper()
+
+            bot.answer_callback_query(callback.id, "Menambahkan...")
+
+            try:
+                # Ambil harga saat ini sebagai ref
+                import yfinance as yf
+                t = yf.Ticker(f"{ticker}.JK")
+                hist = t.history(period="1d")
+                if hist.empty:
+                    reply_text(f"⚠️ Harga *{ticker}* tidak tersedia.")
+                    return
+                ref = float(hist["Close"].iloc[-1])
+
+                watchlist = read_watchlist()
+                if find_item(watchlist, ticker):
+                    reply_text(f"⚠️ *{ticker}* sudah ada di watchlist.")
+                    return
+
+                watchlist.append({
+                    "ticker": ticker,
+                    "reference_price": round(ref, 0),
+                    "watch_down": -5, "watch_up": 10,
+                    "action_down": -10, "action_up": 20,
+                    "panic_down": -15, "panic_up": 30
+                })
+                write_watchlist(watchlist)
+
+                reply_text(
+                    f"✅ *{ticker}* ditambahkan!\n\n"
+                    f"💰 Ref: Rp {ref:,.0f} (harga saat ini)\n"
+                    f"🔵 Watch: -5% / +10%\n"
+                    f"🟡 Action: -10% / +20%\n"
+                    f"🔴 Panic: -15% / +30%\n\n"
+                    f"_Ubah threshold:_\n"
+                    f"`/zone {ticker} watch -5 +10`"
+                )
+            except Exception as e:
+                print(f"⚠️ callback add error: {e}")
+                reply_text(f"⚠️ Gagal menambahkan *{ticker}*.")
+            return
+
+        # Fallback
+        bot.answer_callback_query(callback.id, "Aksi tidak dikenal.")
+
+    except Exception as e:
+        print(f"❌ callback handler error: {e}")
+        try:
+            reply_text("❌ Terjadi kesalahan. Silakan coba lagi.")
+        except:
+            pass
 
 # ========== Webhook ==========
 @app.route("/api/webhook", methods=["POST"])
@@ -644,6 +927,12 @@ def telegram_webhook():
     if str(update.effective_chat.id) != str(ALLOWED_CHAT_ID):
         return jsonify({"ok": False}), 403
 
+    # ========== Handle callback query (klik tombol) ==========
+    if update.callback_query:
+        handle_callback(update.callback_query)
+        return jsonify({"ok": True}), 200
+
+    # ========== Handle message biasa ==========
     msg = update.message
     if not msg or not msg.text:
         return jsonify({"ok": True}), 200
@@ -651,16 +940,21 @@ def telegram_webhook():
     text = msg.text.strip()
     bot = Bot(BOT_TOKEN)
 
-    def reply(t):
-        asyncio.run(bot.send_message(chat_id=msg.chat_id, text=t, parse_mode="Markdown"))
+    def reply(t, keyboard=None):
+        asyncio.run(bot.send_message(
+            chat_id=msg.chat_id,
+            text=t,
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        ))
 
     try:
         if not text.startswith("/"):
             reply(format_sapaan())
             return jsonify({"ok": True}), 200
 
-        balasan = handle_command(text)
-        reply(balasan)
+        balasan, keyboard = handle_command(text)
+        reply(balasan, keyboard)
 
     except Exception as e:
         print(f"❌ handler error: {e}")

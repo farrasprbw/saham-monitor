@@ -1,6 +1,8 @@
 import os
 import json
 import asyncio
+import time
+import random
 import requests
 from flask import Flask, request, jsonify
 from telegram import Update, Bot
@@ -62,8 +64,8 @@ def format_watchlist(watchlist):
         )
     return "\n".join(lines)
 
-# ========== Tanya Gemini ==========
-def tanya_gemini(pesan_user: str, watchlist: list) -> dict:
+# ========== Tanya Gemini (dengan retry) ==========
+def tanya_gemini(pesan_user: str, watchlist: list, max_retries: int = 3) -> dict:
     prompt = f"""Kamu adalah asisten bot saham. Pengguna mengirim pesan dalam bahasa Indonesia (bisa formal, santai, atau campur Inggris).
 
 Pesan pengguna: "{pesan_user}"
@@ -95,11 +97,40 @@ Aturan:
             "temperature": 0.1
         }
     }
-    r = requests.post(url, json=payload, timeout=20)
-    if r.status_code != 200:
-        raise Exception(f"Gemini error: {r.status_code} {r.text[:200]}")
-    teks = r.json()["candidates"][0]["content"]["parts"][0]["text"]
-    return json.loads(teks)
+
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            r = requests.post(url, json=payload, timeout=20)
+
+            # Sukses
+            if r.status_code == 200:
+                teks = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+                return json.loads(teks)
+
+            # Error sementara (503, 429, 500) — coba lagi
+            if r.status_code in (429, 500, 503):
+                last_error = f"Gemini error {r.status_code}"
+                if attempt < max_retries - 1:
+                    delay = (2 ** attempt) + random.uniform(0, 1)
+                    print(f"⚠️ Gemini {r.status_code}, retry dalam {delay:.1f}s...")
+                    time.sleep(delay)
+                    continue
+                raise Exception(f"Gemini error {r.status_code}: {r.text[:200]}")
+
+            # Error permanen (401, 404) — langsung lempar
+            raise Exception(f"Gemini error: {r.status_code} {r.text[:200]}")
+
+        except requests.exceptions.Timeout:
+            last_error = "Timeout"
+            if attempt < max_retries - 1:
+                delay = (2 ** attempt) + random.uniform(0, 1)
+                print(f"⚠️ Gemini timeout, retry dalam {delay:.1f}s...")
+                time.sleep(delay)
+                continue
+            raise Exception("Gemini timeout setelah beberapa kali percobaan.")
+
+    raise Exception(f"Gemini gagal setelah {max_retries} percobaan: {last_error}")
 
 # ========== Eksekusi aksi dari Gemini ==========
 def eksekusi_aksi(aksi: dict, watchlist: list) -> str:

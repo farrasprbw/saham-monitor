@@ -13,7 +13,6 @@ BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 ALLOWED_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GIST_ID = os.environ.get("GIST_ID")
 GIST_ID_ALL_STOCKS = os.environ.get("GIST_ID_ALL_STOCKS")
-GIST_ID_RIWAYAT = os.environ.get("GIST_ID_RIWAYAT")
 GIST_TOKEN = os.environ.get("GIST_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
@@ -440,71 +439,6 @@ def bandingkan_saham(ticker1: str, ticker2: str) -> str:
         f"_Bukan rekomendasi investasi._"
     )
 
-# ========== Simpan riwayat ==========
-def simpan_riwayat(ticker: str, analisis: str, harga: float):
-    from datetime import datetime
-    if not GIST_ID_RIWAYAT:
-        print("⚠️ GIST_ID_RIWAYAT tidak diatur, skip simpan riwayat")
-        return
-
-    try:
-        riwayat = read_gist_file(GIST_ID_RIWAYAT, "riwayat.json")
-        if not isinstance(riwayat, list):
-            riwayat = []
-
-        riwayat.append({
-            "ticker": ticker,
-            "tanggal": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "harga": harga,
-            "analisis": analisis[:500],
-        })
-
-        riwayat = riwayat[-100:]
-
-        url = f"https://api.github.com/gists/{GIST_ID_RIWAYAT}"
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {GIST_TOKEN}",
-        }
-        payload = {
-            "files": {
-                "riwayat.json": {
-                    "content": json.dumps(riwayat, indent=2)
-                }
-            }
-        }
-        r = requests.patch(url, headers=headers, json=payload, timeout=10)
-        if r.status_code != 200:
-            print(f"⚠️ Gagal simpan riwayat: {r.status_code}")
-    except Exception as e:
-        print(f"⚠️ Error simpan riwayat: {e}")
-
-def tampilkan_riwayat(ticker: str) -> str:
-    if not GIST_ID_RIWAYAT:
-        return "⚠️ Fitur riwayat belum dikonfigurasi."
-
-    try:
-        riwayat = read_gist_file(GIST_ID_RIWAYAT, "riwayat.json")
-    except Exception as e:
-        print(f"⚠️ error baca riwayat: {e}")
-        return "⚠️ Riwayat tidak dapat dimuat."
-
-    entries = [r for r in riwayat if r.get("ticker", "").upper() == ticker.upper()]
-    if not entries:
-        return f"📋 Belum ada riwayat untuk *{ticker}*.\n\nCoba `/analisa {ticker}` dulu."
-
-    entries = entries[-5:]
-
-    lines = [f"📜 *RIWAYAT {ticker}* (5 terakhir)\n"]
-    for e in entries:
-        lines.append(
-            f"📅 {e['tanggal']}\n"
-            f"💰 Rp {e['harga']:,.0f}\n"
-            f"_{e['analisis'][:180]}..._\n"
-        )
-
-    return "\n".join(lines)
-
 # ========== Handler command ==========
 def handle_command(text: str) -> str:
     parts = text.split()
@@ -666,9 +600,6 @@ def handle_command(text: str) -> str:
         pe_str = f"{data['pe']:.1f}" if data.get('pe') else "N/A"
         pbv_str = f"{data['pbv']:.2f}" if data.get('pbv') else "N/A"
 
-        # Simpan riwayat (kalau Gist riwayat dikonfigurasi)
-        simpan_riwayat(ticker, analisis, data["current_price"])
-
         return (
             f"📊 *ANALISA {ticker}*\n"
             f"_{data['name']}_\n\n"
@@ -701,11 +632,6 @@ def handle_command(text: str) -> str:
             "Hasil akan dikirim ke chat ini secara otomatis.\n"
             "Mohon tunggu ya. ☕"
         )
-
-    if cmd == "/riwayat":
-        if len(parts) != 2:
-            return "Format: `/riwayat TICKER`\nContoh: `/riwayat ANTM`"
-        return tampilkan_riwayat(parts[1].upper())
 
     return (f"❓ Perintah `{cmd}` tidak dikenal.\n\n"
             f"Kirim `/help` untuk lihat menu.")

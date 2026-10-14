@@ -1,6 +1,8 @@
 import os
 import json
 import asyncio
+import time
+import random
 import requests
 from flask import Flask, request, jsonify
 from telegram import Update, Bot
@@ -12,6 +14,8 @@ ALLOWED_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GIST_ID = os.environ.get("GIST_ID")
 GIST_ID_ALL_STOCKS = os.environ.get("GIST_ID_ALL_STOCKS")
 GIST_TOKEN = os.environ.get("GIST_TOKEN")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 # ========== Baca Gist ==========
 def read_gist_file(gist_id: str, filename: str):
@@ -141,16 +145,159 @@ def cek_saham(query: str) -> str:
                 f"🎯 Batas atas: Rp {upper:,.0f}\n"
             )
         except Exception as e:
-            lines.append(f"⚠️ *{ticker}* — error: {e}")
+            print(f"⚠️ cek_saham error {ticker}: {e}")
+            lines.append(f"⚠️ *{ticker}* — data tidak dapat dimuat.")
 
     return "\n".join(lines)
+
+# ========== Ambil data untuk analisa ==========
+def ambil_data_untuk_analisis(ticker: str):
+    import yfinance as yf
+
+    yf_ticker = f"{ticker}.JK"
+    t = yf.Ticker(yf_ticker)
+    info = t.info
+    hist = t.history(period="1y")
+
+    if hist.empty or len(hist) < 50:
+        return None
+
+    current = float(hist["Close"].iloc[-1])
+    high_52w = float(hist["High"].max())
+    low_52w = float(hist["Low"].min())
+    ma50 = float(hist["Close"].tail(50).mean())
+    ma200 = float(hist["Close"].tail(200).mean()) if len(hist) >= 200 else None
+
+    # RSI 14 hari
+    delta = hist["Close"].diff()
+    gain = delta.where(delta > 0, 0).rolling(14).mean()
+    loss = -delta.where(delta < 0, 0).rolling(14).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    rsi_val = float(rsi.iloc[-1]) if not rsi.empty else None
+
+    return {
+        "ticker": ticker,
+        "name": info.get("longName") or info.get("shortName") or ticker,
+        "current_price": current,
+        "high_52w": high_52w,
+        "low_52w": low_52w,
+        "ma50": ma50,
+        "ma200": ma200,
+        "rsi": rsi_val,
+        "pe": info.get("trailingPE") or info.get("forwardPE"),
+        "pbv": info.get("priceToBook"),
+        "dividend_yield": info.get("dividendYield"),
+        "sector": info.get("sector"),
+    }
+
+def susun_prompt_analisis(data: dict) -> str:
+    div = data.get("dividend_yield")
+    div_str = f"{div*100:.2f}%" if div and div < 1 else (f"{div:.2f}%" if div else "N/A")
+    ma200_str = f"Rp {data['ma200']:,.0f}" if data.get("ma200") else "N/A"
+    rsi_str = f"{data['rsi']:.1f}" if data.get("rsi") else "N/A"
+
+    return f"""Kamu adalah analis saham untuk investor jangka panjang di Indonesia.
+
+Data saham {data['ticker']} ({data['name']}):
+- Harga saat ini: Rp {data['current_price']:,.0f}
+- 52-week high: Rp {data['high_52w']:,.0f}
+- 52-week low: Rp {data['low_52w']:,.0f}
+- MA50: Rp {data['ma50']:,.0f}
+- MA200: {ma200_str}
+- RSI(14): {rsi_str}
+- PE Ratio: {data.get('pe') or 'N/A'}
+- PBV: {data.get('pbv') or 'N/A'}
+- Dividend Yield: {div_str}
+- Sektor: {data.get('sector') or 'N/A'}
+
+Berikan analisis dalam Bahasa Indonesia, maksimal 5 paragraf pendek:
+1. Posisi harga saat ini (murah/mahal/netral) berdasarkan 52w range dan MA
+2. Penilaian valuasi (PE, PBV, dividend)
+3. Sinyal teknikal (RSI, tren MA50 vs MA200)
+4. Risiko utama yang perlu diperhatikan
+5. Kesimpulan singkat
+
+Jangan gunakan markdown bold. Jangan beri rekomendasi beli/jual secara eksplisit. Cukup analisis objektif."""
+
+def call_groq(prompt: str, api_key: str) -> str:
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": "llama-3.3-70b-versatile",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.5,
+        "max_tokens": 1000,
+    }
+    r = requests.post(url, headers=headers, json=payload, timeout=25)
+    if r.status_code != 200:
+        raise Exception(f"Groq {r.status_code}")
+    return r.json()["choices"][0]["message"]["content"].strip()
+
+def call_gemini(prompt: str, api_key: str) -> str:
+    models = [
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-flash-latest",
+    ]
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.5, "maxOutputTokens": 1000},
+    }
+
+    last_error = None
+    for model in models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        try:
+            r = requests.post(url, json=payload, timeout=25)
+            if r.status_code == 200:
+                return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            if r.status_code == 404:
+                last_error = f"{model} tidak tersedia"
+                continue
+            if r.status_code in (429, 500, 503):
+                last_error = f"{model} {r.status_code}"
+                continue
+            raise Exception(f"Gemini {r.status_code}")
+        except requests.exceptions.Timeout:
+            last_error = f"{model} timeout"
+            continue
+    raise Exception(f"Gemini gagal: {last_error}")
+
+def analisa_dengan_ai(data: dict) -> str:
+    """Coba Groq dulu, kalau gagal coba Gemini."""
+    prompt = susun_prompt_analisis(data)
+
+    groq_key = os.environ.get("GROQ_API_KEY")
+    if groq_key:
+        try:
+            print("🤖 Mencoba Groq...")
+            result = call_groq(prompt, groq_key)
+            print("✅ Groq berhasil")
+            return result
+        except Exception as e:
+            print(f"⚠️ Groq gagal: {e}")
+
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    if gemini_key:
+        try:
+            print("🤖 Mencoba Gemini...")
+            result = call_gemini(prompt, gemini_key)
+            print("✅ Gemini berhasil")
+            return result
+        except Exception as e:
+            print(f"⚠️ Gemini gagal: {e}")
+
+    raise Exception("Layanan analisis sedang tidak dapat diakses.")
 
 # ========== Handler command ==========
 def handle_command(text: str) -> str:
     parts = text.split()
     cmd = parts[0].lower()
 
-    # /start atau /help
     if cmd in ("/start", "/help"):
         return (
             "🤖 *Bot Saham Monitor*\n\n"
@@ -167,14 +314,14 @@ def handle_command(text: str) -> str:
             "🔍 `/cek TICKER` — cek harga & zona beli\n"
             "   Contoh: `/cek ANTM`\n"
             "🔎 `/cari NAMA` — cari saham berdasarkan nama\n"
-            "   Contoh: `/cari Bank Mandiri`"
+            "   Contoh: `/cari Bank Mandiri`\n"
+            "📊 `/analisa TICKER` — analisis lengkap\n"
+            "   Contoh: `/analisa ANTM`"
         )
 
-    # /list
     if cmd == "/list":
         return format_watchlist(read_watchlist())
 
-    # /add TICKER REF
     if cmd == "/add":
         if len(parts) != 3:
             return "Format: `/add TICKER REF`\nContoh: `/add BBCA 5500`"
@@ -197,7 +344,6 @@ def handle_command(text: str) -> str:
         write_watchlist(watchlist)
         return f"✅ {ticker} ditambahkan dengan ref Rp {ref:,.0f}"
 
-    # /remove TICKER
     if cmd == "/remove":
         if len(parts) != 2:
             return "Format: `/remove TICKER`\nContoh: `/remove BBRI`"
@@ -209,7 +355,6 @@ def handle_command(text: str) -> str:
         write_watchlist(new_wl)
         return f"✅ {ticker} dihapus dari watchlist."
 
-    # /ref TICKER HARGA
     if cmd == "/ref":
         if len(parts) != 3:
             return "Format: `/ref TICKER HARGA`\nContoh: `/ref BBCA 5800`"
@@ -226,7 +371,6 @@ def handle_command(text: str) -> str:
         write_watchlist(watchlist)
         return f"✅ {ticker} ref = Rp {ref:,.0f}"
 
-    # /zone TICKER ZONA DOWN UP
     if cmd == "/zone":
         if len(parts) != 5:
             return ("Format: `/zone TICKER ZONA DOWN UP`\n"
@@ -250,14 +394,12 @@ def handle_command(text: str) -> str:
         write_watchlist(watchlist)
         return f"✅ {ticker} {zone} = {down}% / +{up}%"
 
-    # /cek TICKER atau /cek NAMA
     if cmd == "/cek":
         if len(parts) < 2:
             return "Format: `/cek TICKER`\nContoh: `/cek ANTM`"
         query = " ".join(parts[1:])
         return cek_saham(query)
 
-    # /cari NAMA
     if cmd == "/cari":
         if len(parts) < 2:
             return "Format: `/cari NAMA`\nContoh: `/cari Bank Mandiri`"
@@ -271,6 +413,48 @@ def handle_command(text: str) -> str:
             lines.append(f"• `{s['ticker']}` — {s['name']}")
         lines.append("\nPakai `/cek TICKER` untuk lihat harga.")
         return "\n".join(lines)
+
+    if cmd == "/analisa":
+        if len(parts) < 2:
+            return "Format: `/analisa TICKER`\nContoh: `/analisa ANTM`"
+        ticker = parts[1].upper()
+
+        stocks = load_all_stocks()
+        match = None
+        for s in stocks:
+            if s["ticker"].upper() == ticker:
+                match = s
+                break
+
+        if not match:
+            return f"❌ {ticker} tidak ada di database. Cek dengan `/cari NAMA`."
+
+        try:
+            data = ambil_data_untuk_analisis(ticker)
+        except Exception as e:
+            print(f"⚠️ ambil_data error: {e}")
+            return f"⚠️ Data untuk {ticker} tidak dapat dimuat saat ini."
+
+        if not data:
+            return f"⚠️ Data untuk {ticker} tidak cukup untuk dianalisis."
+
+        try:
+            analisis = analisa_dengan_ai(data)
+        except Exception as e:
+            print(f"⚠️ analisa error: {e}")
+            return ("⚠️ Layanan analisis sedang tidak dapat diakses.\n\n"
+                    f"Sebagai gantinya, coba `/cek {ticker}` untuk data mentah.")
+
+        rsi_str = f"{data['rsi']:.1f}" if data.get("rsi") else "N/A"
+
+        return (
+            f"📊 *ANALISA {ticker}* — {data['name']}\n\n"
+            f"💰 Harga: Rp {data['current_price']:,.0f}\n"
+            f"📈 PE: {data.get('pe') or 'N/A'} | PBV: {data.get('pbv') or 'N/A'}\n"
+            f"📉 RSI: {rsi_str}\n\n"
+            f"🤖 *Analisis:*\n\n{analisis}\n\n"
+            f"_Bukan rekomendasi investasi._"
+        )
 
     return f"❓ Perintah `{cmd}` tidak dikenal. Kirim `/help` untuk daftar perintah."
 
@@ -294,13 +478,13 @@ def telegram_webhook():
 
     try:
         if not text.startswith("/"):
-            # Kalau user kirim pesan tanpa "/", arahkan ke /help
             reply(
                 "ℹ️ Kirim perintah dengan awalan `/`.\n\n"
                 "Contoh:\n"
                 "• `/list` — lihat watchlist\n"
                 "• `/add BBCA 5500` — tambah saham\n"
-                "• `/cek ANTM` — cek harga saham\n\n"
+                "• `/cek ANTM` — cek harga saham\n"
+                "• `/analisa ANTM` — analisis saham\n\n"
                 "Kirim `/help` untuk daftar lengkap."
             )
             return jsonify({"ok": True}), 200
@@ -309,6 +493,7 @@ def telegram_webhook():
         reply(balasan)
 
     except Exception as e:
-        reply(f"❌ Error: {e}")
+        print(f"❌ handler error: {e}")
+        reply("❌ Terjadi kesalahan. Silakan coba lagi.")
 
     return jsonify({"ok": True}), 200

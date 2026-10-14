@@ -158,13 +158,11 @@ def generate_chart_url(ticker: str, period: str = "3mo") -> str:
     if hist.empty or len(hist) < 5:
         raise Exception("Data historis tidak cukup")
 
-    # Siapkan data
     labels = [d.strftime("%d/%m") for d in hist.index]
     prices = [round(float(p), 0) for p in hist["Close"]]
 
-    # Warna berdasarkan tren
     naik = prices[-1] > prices[0]
-    color = "rgb(34, 197, 94)" if naik else "rgb(239, 68, 68)"  # hijau/merah
+    color = "rgb(34, 197, 94)" if naik else "rgb(239, 68, 68)"
     bg_color = "rgba(34, 197, 94, 0.1)" if naik else "rgba(239, 68, 68, 0.1)"
 
     period_label = {"3mo": "3 Bulan", "6mo": "6 Bulan"}.get(period, period)
@@ -203,7 +201,6 @@ def generate_chart_url(ticker: str, period: str = "3mo") -> str:
     encoded = urllib.parse.quote(config_str)
     return f"https://quickchart.io/chart?c={encoded}&w=800&h=400&bkg=white"
 
-# ========== Ambil info singkat untuk chart ==========
 def get_chart_info(ticker: str, period: str = "3mo"):
     """Return dict dengan info ringkas untuk caption chart."""
     import yfinance as yf
@@ -229,33 +226,26 @@ def get_chart_info(ticker: str, period: str = "3mo"):
 
 # ========== Inline keyboard ==========
 def keyboard_cek(ticker: str):
-    """Inline keyboard untuk /cek."""
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("📊 Analisa", callback_data=f"analisa:{ticker}"),
-            InlineKeyboardButton("📈 Chart 3M", callback_data=f"chart:{ticker}:3mo"),
+            InlineKeyboardButton("📈 Chart", callback_data=f"chart:{ticker}:3mo"),
         ],
         [
-            InlineKeyboardButton("📈 Chart 6M", callback_data=f"chart:{ticker}:6mo"),
             InlineKeyboardButton("➕ Watchlist", callback_data=f"add:{ticker}"),
         ],
     ])
 
 def keyboard_analisa(ticker: str):
-    """Inline keyboard untuk /analisa."""
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("📈 Chart 3M", callback_data=f"chart:{ticker}:3mo"),
-            InlineKeyboardButton("📈 Chart 6M", callback_data=f"chart:{ticker}:6mo"),
-        ],
-        [
+            InlineKeyboardButton("📈 Chart", callback_data=f"chart:{ticker}:3mo"),
             InlineKeyboardButton("➕ Watchlist", callback_data=f"add:{ticker}"),
         ],
     ])
 
 # ========== Cek saham (return text + keyboard) ==========
 def cek_saham_data(query: str):
-    """Return (text, keyboard) atau (text, None) kalau tidak ketemu."""
     import yfinance as yf
 
     stocks = load_all_stocks()
@@ -559,7 +549,6 @@ def bandingkan_saham(ticker1: str, ticker2: str) -> str:
 
 # ========== Handler command ==========
 def handle_command(text: str):
-    """Return (text, keyboard) — keyboard bisa None."""
     parts = text.split()
     cmd = parts[0].lower()
 
@@ -759,7 +748,6 @@ def handle_command(text: str):
 
 # ========== Handler callback query ==========
 def handle_callback(callback):
-    """Proses klik inline keyboard. Return (text, keyboard, photo_url)."""
     data = callback.data or ""
     parts = data.split(":")
     action = parts[0] if parts else ""
@@ -767,28 +755,29 @@ def handle_callback(callback):
     chat_id = callback.message.chat_id
     bot = Bot(BOT_TOKEN)
 
+    def answer(text=""):
+        asyncio.run(bot.answer_callback_query(callback.id, text=text))
+
     def reply_text(text, keyboard=None):
-        bot.send_message(
+        asyncio.run(bot.send_message(
             chat_id=chat_id,
             text=text,
             parse_mode="Markdown",
             reply_markup=keyboard
-        )
+        ))
 
     def reply_photo(photo_url, caption):
-        bot.send_photo(
+        asyncio.run(bot.send_photo(
             chat_id=chat_id,
             photo=photo_url,
             caption=caption,
             parse_mode="Markdown"
-        )
+        ))
 
     try:
-        # ========== ANALISA ==========
         if action == "analisa" and len(parts) == 2:
             ticker = parts[1].upper()
-
-            bot.answer_callback_query(callback.id, "Menyiapkan analisis...")
+            answer("Menyiapkan analisis...")
 
             try:
                 data = ambil_data_untuk_analisis(ticker)
@@ -828,12 +817,10 @@ def handle_callback(callback):
             reply_text(text, keyboard_analisa(ticker))
             return
 
-        # ========== CHART ==========
         if action == "chart" and len(parts) == 3:
             ticker = parts[1].upper()
-            period = parts[2]  # "3mo" atau "6mo"
-
-            bot.answer_callback_query(callback.id, "Menyiapkan chart...")
+            period = parts[2]
+            answer("Menyiapkan chart...")
 
             try:
                 chart_url = generate_chart_url(ticker, period)
@@ -865,14 +852,11 @@ def handle_callback(callback):
                 reply_text(f"⚠️ Chart *{ticker}* gagal dikirim. Coba lagi nanti.")
             return
 
-        # ========== ADD WATCHLIST ==========
         if action == "add" and len(parts) == 2:
             ticker = parts[1].upper()
-
-            bot.answer_callback_query(callback.id, "Menambahkan...")
+            answer("Menambahkan...")
 
             try:
-                # Ambil harga saat ini sebagai ref
                 import yfinance as yf
                 t = yf.Ticker(f"{ticker}.JK")
                 hist = t.history(period="1d")
@@ -909,8 +893,7 @@ def handle_callback(callback):
                 reply_text(f"⚠️ Gagal menambahkan *{ticker}*.")
             return
 
-        # Fallback
-        bot.answer_callback_query(callback.id, "Aksi tidak dikenal.")
+        answer("Aksi tidak dikenal.")
 
     except Exception as e:
         print(f"❌ callback handler error: {e}")
@@ -927,12 +910,10 @@ def telegram_webhook():
     if str(update.effective_chat.id) != str(ALLOWED_CHAT_ID):
         return jsonify({"ok": False}), 403
 
-    # ========== Handle callback query (klik tombol) ==========
     if update.callback_query:
         handle_callback(update.callback_query)
         return jsonify({"ok": True}), 200
 
-    # ========== Handle message biasa ==========
     msg = update.message
     if not msg or not msg.text:
         return jsonify({"ok": True}), 200

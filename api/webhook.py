@@ -1,5 +1,6 @@
 import os
 import json
+import io
 import asyncio
 import time
 import random
@@ -148,7 +149,6 @@ def format_watchlist(watchlist):
 
 # ========== Chart Generator (QuickChart) ==========
 def generate_chart_url(ticker: str, period: str = "3mo") -> str:
-    """Generate QuickChart URL untuk line chart saham."""
     import yfinance as yf
 
     yf_ticker = f"{ticker}.JK"
@@ -165,7 +165,7 @@ def generate_chart_url(ticker: str, period: str = "3mo") -> str:
     color = "rgb(34, 197, 94)" if naik else "rgb(239, 68, 68)"
     bg_color = "rgba(34, 197, 94, 0.1)" if naik else "rgba(239, 68, 68, 0.1)"
 
-    period_label = {"3mo": "3 Bulan", "6mo": "6 Bulan"}.get(period, period)
+    period_label = {"3mo": "3 Bulan", "6mo": "6 Bulan", "1y": "1 Tahun"}.get(period, period)
 
     chart_config = {
         "type": "line",
@@ -199,10 +199,10 @@ def generate_chart_url(ticker: str, period: str = "3mo") -> str:
 
     config_str = json.dumps(chart_config)
     encoded = urllib.parse.quote(config_str)
-    return f"https://quickchart.io/chart?c={encoded}&w=800&h=400&bkg=white"
+    # Ukuran lebih kecil agar upload cepat
+    return f"https://quickchart.io/chart?c={encoded}&w=600&h=300&bkg=white"
 
 def get_chart_info(ticker: str, period: str = "3mo"):
-    """Return dict dengan info ringkas untuk caption chart."""
     import yfinance as yf
 
     yf_ticker = f"{ticker}.JK"
@@ -766,39 +766,53 @@ def handle_callback(callback):
             reply_markup=keyboard
         ))
 
-    def reply_photo(photo_url, caption):
-        asyncio.run(bot.send_photo(
-            chat_id=chat_id,
-            photo=photo_url,
-            caption=caption,
-            parse_mode="Markdown"
-        ))
-
     try:
+        # ========== ANALISA ==========
         if action == "analisa" and len(parts) == 2:
             ticker = parts[1].upper()
             answer("Menyiapkan analisis...")
+
+            # Loading message
+            loading_msg = asyncio.run(bot.send_message(
+                chat_id=chat_id,
+                text=f"⏳ Menganalisis *{ticker}*...\n_Mohon tunggu 5-15 detik._",
+                parse_mode="Markdown"
+            ))
+            loading_id = loading_msg.message_id
 
             try:
                 data = ambil_data_untuk_analisis(ticker)
             except Exception as e:
                 print(f"⚠️ callback ambil_data error: {e}")
-                reply_text(f"⚠️ Data untuk *{ticker}* tidak dapat dimuat.")
+                asyncio.run(bot.edit_message_text(
+                    chat_id=chat_id, message_id=loading_id,
+                    text=f"⚠️ Data untuk *{ticker}* tidak dapat dimuat."
+                ))
                 return
 
             if not data:
-                reply_text(f"⚠️ Data untuk *{ticker}* tidak cukup.")
+                asyncio.run(bot.edit_message_text(
+                    chat_id=chat_id, message_id=loading_id,
+                    text=f"⚠️ Data untuk *{ticker}* tidak cukup."
+                ))
                 return
 
             try:
                 analisis = analisa_dengan_ai(data)
             except Exception as e:
                 print(f"⚠️ callback analisa error: {e}")
-                reply_text(
-                    "⚠️ Layanan analisis sedang tidak dapat diakses.\n\n"
-                    f"Coba lagi nanti, atau pakai `/cek {ticker}`."
-                )
+                asyncio.run(bot.edit_message_text(
+                    chat_id=chat_id, message_id=loading_id,
+                    text="⚠️ Layanan analisis sedang tidak dapat diakses.\n\n"
+                         f"Coba lagi nanti, atau pakai `/cek {ticker}`."
+                ))
                 return
+
+            # Hapus loading, kirim hasil
+            try:
+                asyncio.run(bot.delete_message(chat_id=chat_id, message_id=loading_id))
+            except:
+                pass
 
             rsi_str = f"{data['rsi']:.1f}" if data.get("rsi") else "N/A"
             pe_str = f"{data['pe']:.1f}" if data.get('pe') else "N/A"
@@ -817,26 +831,42 @@ def handle_callback(callback):
             reply_text(text, keyboard_analisa(ticker))
             return
 
+        # ========== CHART ==========
         if action == "chart" and len(parts) == 3:
             ticker = parts[1].upper()
             period = parts[2]
-            answer("Menyiapkan chart...")
+            answer("⏳ Menyiapkan chart...")
 
+            period_label = {"3mo": "3 Bulan", "6mo": "6 Bulan", "1y": "1 Tahun"}.get(period, period)
+
+            # Loading message
+            loading_msg = asyncio.run(bot.send_message(
+                chat_id=chat_id,
+                text=f"⏳ Menyiapkan chart *{ticker}* ({period_label})...",
+                parse_mode="Markdown"
+            ))
+            loading_id = loading_msg.message_id
+
+            # Generate chart URL
             try:
                 chart_url = generate_chart_url(ticker, period)
                 info = get_chart_info(ticker, period)
             except Exception as e:
                 print(f"⚠️ chart error: {e}")
-                reply_text(f"⚠️ Chart untuk *{ticker}* tidak dapat dibuat saat ini.")
+                asyncio.run(bot.edit_message_text(
+                    chat_id=chat_id, message_id=loading_id,
+                    text=f"⚠️ Chart *{ticker}* tidak dapat dibuat saat ini."
+                ))
                 return
 
             if not info:
-                reply_text(f"⚠️ Data historis *{ticker}* tidak tersedia.")
+                asyncio.run(bot.edit_message_text(
+                    chat_id=chat_id, message_id=loading_id,
+                    text=f"⚠️ Data historis *{ticker}* tidak tersedia."
+                ))
                 return
 
-            period_label = {"3mo": "3 Bulan", "6mo": "6 Bulan"}.get(period, period)
             arah = "naik" if info["change"] > 0 else "turun"
-
             caption = (
                 f"📈 *{ticker}* — {period_label} Terakhir\n\n"
                 f"💰 Sekarang: Rp {info['current']:,.0f}\n"
@@ -845,13 +875,43 @@ def handle_callback(callback):
                 f"🔻 Terendah: Rp {info['low']:,.0f}"
             )
 
+            # Coba download + upload, fallback ke link kalau gagal
+            sent = False
             try:
-                reply_photo(chart_url, caption)
+                r = requests.get(chart_url, timeout=8)
+                if r.status_code == 200:
+                    photo_bytes = io.BytesIO(r.content)
+                    asyncio.run(bot.send_photo(
+                        chat_id=chat_id,
+                        photo=photo_bytes,
+                        caption=caption,
+                        parse_mode="Markdown"
+                    ))
+                    sent = True
+                    print("✅ Chart terkirim via upload")
             except Exception as e:
-                print(f"⚠️ send_photo error: {e}")
-                reply_text(f"⚠️ Chart *{ticker}* gagal dikirim. Coba lagi nanti.")
+                print(f"⚠️ download/upload chart error: {e}")
+
+            # Fallback: kirim link
+            if not sent:
+                try:
+                    asyncio.run(bot.send_message(
+                        chat_id=chat_id,
+                        text=f"{caption}\n\n📊 [Buka Chart]({chart_url})",
+                        parse_mode="Markdown"
+                    ))
+                    print("✅ Chart terkirim via link (fallback)")
+                except Exception as e2:
+                    print(f"⚠️ fallback link error: {e2}")
+
+            # Hapus loading message
+            try:
+                asyncio.run(bot.delete_message(chat_id=chat_id, message_id=loading_id))
+            except:
+                pass
             return
 
+        # ========== ADD WATCHLIST ==========
         if action == "add" and len(parts) == 2:
             ticker = parts[1].upper()
             answer("Menambahkan...")

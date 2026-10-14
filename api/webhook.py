@@ -239,9 +239,10 @@ def call_groq(prompt: str, api_key: str) -> str:
 
 def call_gemini(prompt: str, api_key: str) -> str:
     models = [
+        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
         "gemini-2.5-flash",
         "gemini-2.0-flash",
-        "gemini-flash-latest",
     ]
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -268,7 +269,6 @@ def call_gemini(prompt: str, api_key: str) -> str:
     raise Exception(f"Gemini gagal: {last_error}")
 
 def analisa_dengan_ai(data: dict) -> str:
-    """Coba Groq dulu, kalau gagal coba Gemini."""
     prompt = susun_prompt_analisis(data)
 
     groq_key = os.environ.get("GROQ_API_KEY")

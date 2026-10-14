@@ -20,9 +20,6 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 GITHUB_REPO = os.environ.get("GITHUB_REPO")
 GITHUB_PAT = os.environ.get("GITHUB_PAT")
 
-# Garis pemisah untuk tampilan
-LINE = "━━━━━━━━━━━━━━━━━━"
-
 # ========== Baca Gist ==========
 def read_gist_file(gist_id: str, filename: str):
     url = f"https://api.github.com/gists/{gist_id}"
@@ -89,40 +86,32 @@ def search_in_database(stocks: list, query: str):
 # ========== Format tampilan ==========
 def format_menu_utama():
     return (
-        "╔══════════════════════════╗\n"
-        "║   🤖 *SAHAM MONITOR*     ║\n"
-        "╚══════════════════════════╝\n\n"
-        "Selamat datang! Saya bot pemantau saham IDX.\n\n"
-        f"{LINE}\n"
+        "🤖 *SAHAM MONITOR*\n"
+        "_Bot pemantau saham IDX_\n\n"
+        "Selamat datang! Saya membantu Anda:\n\n"
         "📋 *KELOLA WATCHLIST*\n"
-        f"{LINE}\n"
-        "`/list` — lihat daftar pantau\n"
-        "`/add BBCA 5500` — tambah saham\n"
-        "`/remove BBRI` — hapus saham\n"
-        "`/ref BBCA 5800` — ubah harga acuan\n"
-        "`/zone BBCA watch -5 +10` — ubah threshold\n\n"
-        f"{LINE}\n"
+        "• /list — lihat daftar pantau\n"
+        "• /add BBCA 5500 — tambah saham\n"
+        "• /remove BBRI — hapus saham\n"
+        "• /ref BBCA 5800 — ubah harga acuan\n"
+        "• /zone BBCA watch -5 +10 — ubah threshold\n\n"
         "🔍 *CARI & CEK SAHAM*\n"
-        f"{LINE}\n"
-        "`/cari Bank Mandiri` — cari saham\n"
-        "`/cek ANTM` — cek harga & zona beli\n"
-        "`/bandingkan ANTM MDKA` — bandingkan 2 saham\n\n"
-        f"{LINE}\n"
-        "🤖 *ANALISIS & REKOMENDASI*\n"
-        f"{LINE}\n"
-        "`/analisa ANTM` — analisis lengkap\n"
-        "`/rekomendasi` — minta rekomendasi Top 5\n\n"
-        f"{LINE}\n"
+        "• /cari Bank Mandiri — cari saham\n"
+        "• /cek ANTM — cek harga & zona beli\n"
+        "• /bandingkan ANTM MDKA — bandingkan 2 saham\n\n"
+        "📊 *ANALISIS & REKOMENDASI*\n"
+        "• /analisa ANTM — analisis lengkap\n"
+        "• /rekomendasi — minta rekomendasi Top 5\n\n"
         "_Bukan rekomendasi investasi._"
     )
 
 def format_sapaan():
     return (
         "👋 *Halo!*\n\n"
-        "Saya bot pemantau saham IDX.\n\n"
-        "Kirim perintah dengan awalan `/` ya.\n\n"
-        "📌 Ketik `/help` untuk lihat menu lengkap\n"
-        "📌 Atau coba: `/cek ANTM`"
+        "Saya bot pemantau saham IDX.\n"
+        "Kirim perintah dengan awalan `/`.\n\n"
+        "Ketik /help untuk lihat menu lengkap.\n"
+        "Atau coba: `/cek ANTM`"
     )
 
 def format_watchlist(watchlist):
@@ -131,15 +120,11 @@ def format_watchlist(watchlist):
             "📋 *WATCHLIST KOSONG*\n\n"
             "Belum ada saham yang dipantau.\n\n"
             "Tambahkan dengan:\n"
-            "`/add BBCA 5500`\n"
-            "`/add BBRI 3000`"
+            "• /add BBCA 5500\n"
+            "• /add BBRI 3000"
         )
 
-    lines = [
-        "📋 *WATCHLIST ANDA*",
-        LINE,
-        ""
-    ]
+    lines = [f"📋 *WATCHLIST ANDA* ({len(watchlist)} saham)\n"]
     for i, item in enumerate(watchlist, 1):
         ticker = item['ticker']
         ref = item['reference_price']
@@ -151,14 +136,12 @@ def format_watchlist(watchlist):
         pu = item.get('panic_up', 0)
 
         lines.append(
-            f"*{i}. {ticker}* — ref Rp {ref:,.0f}\n"
-            f"   🔵 watch  {wd}% / +{wu}%\n"
-            f"   🟡 action {ad}% / +{au}%\n"
-            f"   🔴 panic  {pd}% / +{pu}%\n"
+            f"\n*{i}. {ticker}* — ref Rp {ref:,.0f}\n"
+            f"🔵 watch {wd}% / +{wu}%\n"
+            f"🟡 action {ad}% / +{au}%\n"
+            f"🔴 panic {pd}% / +{pu}%"
         )
 
-    lines.append(LINE)
-    lines.append(f"Total: *{len(watchlist)}* saham")
     return "\n".join(lines)
 
 def cek_saham(query: str) -> str:
@@ -210,16 +193,13 @@ def cek_saham(query: str) -> str:
 
             blocks.append(
                 f"📊 *{ticker}*\n"
-                f"_{name}_\n"
-                f"{LINE}\n"
+                f"_{name}_\n\n"
                 f"💰 Harga: *Rp {current:,.0f}*\n"
                 f"📈 PE: {pe_str}  |  PBV: {pbv_str}\n"
-                f"💵 Dividend: {div_str}\n"
-                f"{LINE}\n"
+                f"💵 Dividend: {div_str}\n\n"
                 f"🟢 Zona beli: Rp {buy_low:,.0f} – {buy_high:,.0f}\n"
                 f"🔴 Batas bawah: Rp {lower:,.0f}\n"
-                f"🎯 Batas atas: Rp {upper:,.0f}\n"
-                f"{LINE}\n"
+                f"🎯 Batas atas: Rp {upper:,.0f}\n\n"
                 f"📉 52w: Rp {low_52w:,.0f} – {high_52w:,.0f}"
             )
         except Exception as e:
@@ -442,8 +422,7 @@ def bandingkan_saham(ticker1: str, ticker2: str) -> str:
         return f"{v:{fmt_str}}"
 
     return (
-        f"⚖️ *PERBANDINGAN SAHAM*\n"
-        f"{LINE}\n\n"
+        f"⚖️ *PERBANDINGAN SAHAM*\n\n"
         f"📊 *{a['ticker']}*\n"
         f"_{a['name']}_\n"
         f"💰 Rp {a['current']:,.0f}\n"
@@ -458,9 +437,73 @@ def bandingkan_saham(ticker1: str, ticker2: str) -> str:
         f"💵 Div {fmt_div(b['div'])}\n"
         f"📉 RSI {fmt(b['rsi'])}\n"
         f"📏 MA50 Rp {b['ma50']:,.0f}\n\n"
-        f"{LINE}\n"
         f"_Bukan rekomendasi investasi._"
     )
+
+# ========== Simpan riwayat ==========
+def simpan_riwayat(ticker: str, analisis: str, harga: float):
+    from datetime import datetime
+    if not GIST_ID_RIWAYAT:
+        print("⚠️ GIST_ID_RIWAYAT tidak diatur, skip simpan riwayat")
+        return
+
+    try:
+        riwayat = read_gist_file(GIST_ID_RIWAYAT, "riwayat.json")
+        if not isinstance(riwayat, list):
+            riwayat = []
+
+        riwayat.append({
+            "ticker": ticker,
+            "tanggal": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "harga": harga,
+            "analisis": analisis[:500],
+        })
+
+        riwayat = riwayat[-100:]
+
+        url = f"https://api.github.com/gists/{GIST_ID_RIWAYAT}"
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {GIST_TOKEN}",
+        }
+        payload = {
+            "files": {
+                "riwayat.json": {
+                    "content": json.dumps(riwayat, indent=2)
+                }
+            }
+        }
+        r = requests.patch(url, headers=headers, json=payload, timeout=10)
+        if r.status_code != 200:
+            print(f"⚠️ Gagal simpan riwayat: {r.status_code}")
+    except Exception as e:
+        print(f"⚠️ Error simpan riwayat: {e}")
+
+def tampilkan_riwayat(ticker: str) -> str:
+    if not GIST_ID_RIWAYAT:
+        return "⚠️ Fitur riwayat belum dikonfigurasi."
+
+    try:
+        riwayat = read_gist_file(GIST_ID_RIWAYAT, "riwayat.json")
+    except Exception as e:
+        print(f"⚠️ error baca riwayat: {e}")
+        return "⚠️ Riwayat tidak dapat dimuat."
+
+    entries = [r for r in riwayat if r.get("ticker", "").upper() == ticker.upper()]
+    if not entries:
+        return f"📋 Belum ada riwayat untuk *{ticker}*.\n\nCoba `/analisa {ticker}` dulu."
+
+    entries = entries[-5:]
+
+    lines = [f"📜 *RIWAYAT {ticker}* (5 terakhir)\n"]
+    for e in entries:
+        lines.append(
+            f"📅 {e['tanggal']}\n"
+            f"💰 Rp {e['harga']:,.0f}\n"
+            f"_{e['analisis'][:180]}..._\n"
+        )
+
+    return "\n".join(lines)
 
 # ========== Handler command ==========
 def handle_command(text: str) -> str:
@@ -499,8 +542,7 @@ def handle_command(text: str) -> str:
         })
         write_watchlist(watchlist)
         return (
-            f"✅ *{ticker}* ditambahkan!\n"
-            f"{LINE}\n"
+            f"✅ *{ticker}* ditambahkan!\n\n"
             f"💰 Ref harga: Rp {ref:,.0f}\n"
             f"🔵 Watch: -5% / +10%\n"
             f"🟡 Action: -10% / +20%\n"
@@ -563,8 +605,7 @@ def handle_command(text: str) -> str:
 
         emoji_zone = {"watch": "🔵", "action": "🟡", "panic": "🔴"}[zone]
         return (
-            f"✅ *{ticker}* — {emoji_zone} {zone}\n"
-            f"{LINE}\n"
+            f"✅ *{ticker}* — {emoji_zone} {zone}\n\n"
             f"⬇️ Turun: {down}%\n"
             f"⬆️ Naik: +{up}%"
         )
@@ -583,11 +624,10 @@ def handle_command(text: str) -> str:
         matches = search_in_database(stocks, query)
         if not matches:
             return f"❌ Tidak ada saham dengan nama *{query}*."
-        lines = [f"🔎 *HASIL PENCARIAN: {query}*\n", LINE, ""]
+        lines = [f"🔎 *HASIL PENCARIAN: {query}*\n"]
         for s in matches:
             lines.append(f"• `{s['ticker']}` — {s['name']}")
         lines.append("")
-        lines.append(LINE)
         lines.append("Pakai `/cek TICKER` untuk lihat harga.")
         return "\n".join(lines)
 
@@ -626,18 +666,17 @@ def handle_command(text: str) -> str:
         pe_str = f"{data['pe']:.1f}" if data.get('pe') else "N/A"
         pbv_str = f"{data['pbv']:.2f}" if data.get('pbv') else "N/A"
 
+        # Simpan riwayat (kalau Gist riwayat dikonfigurasi)
+        simpan_riwayat(ticker, analisis, data["current_price"])
+
         return (
             f"📊 *ANALISA {ticker}*\n"
-            f"_{data['name']}_\n"
-            f"{LINE}\n\n"
+            f"_{data['name']}_\n\n"
             f"💰 Harga: *Rp {data['current_price']:,.0f}*\n"
             f"📈 PE: {pe_str}  |  PBV: {pbv_str}\n"
             f"📉 RSI: {rsi_str}\n\n"
-            f"{LINE}\n"
-            f"🤖 *HASIL ANALISIS*\n"
-            f"{LINE}\n\n"
+            f"━━━ 🤖 *HASIL ANALISIS* ━━━\n\n"
             f"{analisis}\n\n"
-            f"{LINE}\n"
             f"_Bukan rekomendasi investasi._"
         )
 
@@ -662,6 +701,11 @@ def handle_command(text: str) -> str:
             "Hasil akan dikirim ke chat ini secara otomatis.\n"
             "Mohon tunggu ya. ☕"
         )
+
+    if cmd == "/riwayat":
+        if len(parts) != 2:
+            return "Format: `/riwayat TICKER`\nContoh: `/riwayat ANTM`"
+        return tampilkan_riwayat(parts[1].upper())
 
     return (f"❓ Perintah `{cmd}` tidak dikenal.\n\n"
             f"Kirim `/help` untuk lihat menu.")

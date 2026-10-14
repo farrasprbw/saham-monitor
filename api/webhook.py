@@ -1,5 +1,6 @@
 import os
 import json
+import asyncio
 import requests
 from flask import Flask, request, jsonify
 from telegram import Update, Bot
@@ -63,7 +64,7 @@ def telegram_webhook():
     bot = Bot(BOT_TOKEN)
 
     def reply(t):
-        bot.send_message(chat_id=msg.chat_id, text=t, parse_mode="Markdown")
+        asyncio.run(bot.send_message(chat_id=msg.chat_id, text=t, parse_mode="Markdown"))
 
     try:
         # /start atau /help

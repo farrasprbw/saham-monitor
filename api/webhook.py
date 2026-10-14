@@ -199,7 +199,6 @@ def generate_chart_url(ticker: str, period: str = "3mo") -> str:
 
     config_str = json.dumps(chart_config)
     encoded = urllib.parse.quote(config_str)
-    # Ukuran lebih kecil agar upload cepat
     return f"https://quickchart.io/chart?c={encoded}&w=600&h=300&bkg=white"
 
 def get_chart_info(ticker: str, period: str = "3mo"):
@@ -756,15 +755,21 @@ def handle_callback(callback):
     bot = Bot(BOT_TOKEN)
 
     def answer(text=""):
-        asyncio.run(bot.answer_callback_query(callback.id, text=text))
+        try:
+            asyncio.run(bot.answer_callback_query(callback.id, text=text))
+        except:
+            pass
 
     def reply_text(text, keyboard=None):
-        asyncio.run(bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            parse_mode="Markdown",
-            reply_markup=keyboard
-        ))
+        try:
+            asyncio.run(bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="Markdown",
+                reply_markup=keyboard
+            ))
+        except Exception as e:
+            print(f"⚠️ reply_text error: {e}")
 
     try:
         # ========== ANALISA ==========
@@ -772,63 +777,91 @@ def handle_callback(callback):
             ticker = parts[1].upper()
             answer("Menyiapkan analisis...")
 
-            # Loading message
-            loading_msg = asyncio.run(bot.send_message(
-                chat_id=chat_id,
-                text=f"⏳ Menganalisis *{ticker}*...\n_Mohon tunggu 5-15 detik._",
-                parse_mode="Markdown"
-            ))
-            loading_id = loading_msg.message_id
-
+            # Loading
             try:
-                data = ambil_data_untuk_analisis(ticker)
-            except Exception as e:
-                print(f"⚠️ callback ambil_data error: {e}")
-                asyncio.run(bot.edit_message_text(
-                    chat_id=chat_id, message_id=loading_id,
-                    text=f"⚠️ Data untuk *{ticker}* tidak dapat dimuat."
+                loading_msg = asyncio.run(bot.send_message(
+                    chat_id=chat_id,
+                    text=f"⏳ Menganalisis *{ticker}*...\n_Mohon tunggu 5-15 detik._",
+                    parse_mode="Markdown"
                 ))
-                return
-
-            if not data:
-                asyncio.run(bot.edit_message_text(
-                    chat_id=chat_id, message_id=loading_id,
-                    text=f"⚠️ Data untuk *{ticker}* tidak cukup."
-                ))
-                return
-
-            try:
-                analisis = analisa_dengan_ai(data)
-            except Exception as e:
-                print(f"⚠️ callback analisa error: {e}")
-                asyncio.run(bot.edit_message_text(
-                    chat_id=chat_id, message_id=loading_id,
-                    text="⚠️ Layanan analisis sedang tidak dapat diakses.\n\n"
-                         f"Coba lagi nanti, atau pakai `/cek {ticker}`."
-                ))
-                return
-
-            # Hapus loading, kirim hasil
-            try:
-                asyncio.run(bot.delete_message(chat_id=chat_id, message_id=loading_id))
+                loading_id = loading_msg.message_id
             except:
-                pass
+                loading_id = None
 
-            rsi_str = f"{data['rsi']:.1f}" if data.get("rsi") else "N/A"
-            pe_str = f"{data['pe']:.1f}" if data.get('pe') else "N/A"
-            pbv_str = f"{data['pbv']:.2f}" if data.get('pbv') else "N/A"
+            # Ambil data
+            try:
+                data_analisis = ambil_data_untuk_analisis(ticker)
+            except Exception as e:
+                print(f"⚠️ ambil_data error: {e}")
+                if loading_id:
+                    try:
+                        asyncio.run(bot.edit_message_text(
+                            chat_id=chat_id, message_id=loading_id,
+                            text=f"⚠️ Data *{ticker}* tidak dapat dimuat."
+                        ))
+                    except:
+                        pass
+                return
+
+            if not data_analisis:
+                if loading_id:
+                    try:
+                        asyncio.run(bot.edit_message_text(
+                            chat_id=chat_id, message_id=loading_id,
+                            text=f"⚠️ Data *{ticker}* tidak cukup."
+                        ))
+                    except:
+                        pass
+                return
+
+            # Generate analisis AI
+            try:
+                analisis = analisa_dengan_ai(data_analisis)
+            except Exception as e:
+                print(f"⚠️ analisa error: {e}")
+                if loading_id:
+                    try:
+                        asyncio.run(bot.edit_message_text(
+                            chat_id=chat_id, message_id=loading_id,
+                            text="⚠️ Layanan analisis sedang tidak dapat diakses."
+                        ))
+                    except:
+                        pass
+                return
+
+            # Hapus loading
+            if loading_id:
+                try:
+                    asyncio.run(bot.delete_message(chat_id=chat_id, message_id=loading_id))
+                except:
+                    pass
+
+            # Kirim hasil — kalau timeout, jangan kirim error
+            rsi_str = f"{data_analisis['rsi']:.1f}" if data_analisis.get("rsi") else "N/A"
+            pe_str = f"{data_analisis['pe']:.1f}" if data_analisis.get('pe') else "N/A"
+            pbv_str = f"{data_analisis['pbv']:.2f}" if data_analisis.get('pbv') else "N/A"
 
             text = (
                 f"📊 *ANALISA {ticker}*\n"
-                f"_{data['name']}_\n\n"
-                f"💰 Harga: *Rp {data['current_price']:,.0f}*\n"
+                f"_{data_analisis['name']}_\n\n"
+                f"💰 Harga: *Rp {data_analisis['current_price']:,.0f}*\n"
                 f"📈 PE: {pe_str}  |  PBV: {pbv_str}\n"
                 f"📉 RSI: {rsi_str}\n\n"
                 f"━━━ 🤖 *HASIL ANALISIS* ━━━\n\n"
                 f"{analisis}\n\n"
                 f"_Bukan rekomendasi investasi._"
             )
-            reply_text(text, keyboard_analisa(ticker))
+
+            try:
+                asyncio.run(bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    parse_mode="Markdown",
+                    reply_markup=keyboard_analisa(ticker)
+                ))
+                print(f"✅ Analisa {ticker} terkirim")
+            except Exception as e:
+                print(f"⚠️ send analisa error: {e}")
             return
 
         # ========== CHART ==========
@@ -839,31 +872,42 @@ def handle_callback(callback):
 
             period_label = {"3mo": "3 Bulan", "6mo": "6 Bulan", "1y": "1 Tahun"}.get(period, period)
 
-            # Loading message
-            loading_msg = asyncio.run(bot.send_message(
-                chat_id=chat_id,
-                text=f"⏳ Menyiapkan chart *{ticker}* ({period_label})...",
-                parse_mode="Markdown"
-            ))
-            loading_id = loading_msg.message_id
+            # Loading
+            try:
+                loading_msg = asyncio.run(bot.send_message(
+                    chat_id=chat_id,
+                    text=f"⏳ Menyiapkan chart *{ticker}* ({period_label})...",
+                    parse_mode="Markdown"
+                ))
+                loading_id = loading_msg.message_id
+            except:
+                loading_id = None
 
-            # Generate chart URL
+            # Generate chart URL + info
             try:
                 chart_url = generate_chart_url(ticker, period)
                 info = get_chart_info(ticker, period)
             except Exception as e:
                 print(f"⚠️ chart error: {e}")
-                asyncio.run(bot.edit_message_text(
-                    chat_id=chat_id, message_id=loading_id,
-                    text=f"⚠️ Chart *{ticker}* tidak dapat dibuat saat ini."
-                ))
+                if loading_id:
+                    try:
+                        asyncio.run(bot.edit_message_text(
+                            chat_id=chat_id, message_id=loading_id,
+                            text=f"⚠️ Chart *{ticker}* tidak dapat dibuat saat ini."
+                        ))
+                    except:
+                        pass
                 return
 
             if not info:
-                asyncio.run(bot.edit_message_text(
-                    chat_id=chat_id, message_id=loading_id,
-                    text=f"⚠️ Data historis *{ticker}* tidak tersedia."
-                ))
+                if loading_id:
+                    try:
+                        asyncio.run(bot.edit_message_text(
+                            chat_id=chat_id, message_id=loading_id,
+                            text=f"⚠️ Data historis *{ticker}* tidak tersedia."
+                        ))
+                    except:
+                        pass
                 return
 
             arah = "naik" if info["change"] > 0 else "turun"
@@ -875,40 +919,62 @@ def handle_callback(callback):
                 f"🔻 Terendah: Rp {info['low']:,.0f}"
             )
 
-            # Coba download + upload, fallback ke link kalau gagal
-            sent = False
+            # Download dari QuickChart
+            download_ok = False
+            photo_bytes = None
             try:
-                r = requests.get(chart_url, timeout=8)
+                r = requests.get(chart_url, timeout=6)
                 if r.status_code == 200:
                     photo_bytes = io.BytesIO(r.content)
-                    asyncio.run(bot.send_photo(
-                        chat_id=chat_id,
-                        photo=photo_bytes,
-                        caption=caption,
-                        parse_mode="Markdown"
-                    ))
-                    sent = True
-                    print("✅ Chart terkirim via upload")
+                    download_ok = True
+                    print("✅ Chart didownload")
+                else:
+                    print(f"⚠️ QuickChart status: {r.status_code}")
             except Exception as e:
-                print(f"⚠️ download/upload chart error: {e}")
+                print(f"⚠️ download chart error: {e}")
 
-            # Fallback: kirim link
-            if not sent:
-                try:
-                    asyncio.run(bot.send_message(
-                        chat_id=chat_id,
-                        text=f"{caption}\n\n📊 [Buka Chart]({chart_url})",
-                        parse_mode="Markdown"
-                    ))
-                    print("✅ Chart terkirim via link (fallback)")
-                except Exception as e2:
-                    print(f"⚠️ fallback link error: {e2}")
+            if not download_ok:
+                # Benar-benar gagal download — edit loading jadi link
+                if loading_id:
+                    try:
+                        asyncio.run(bot.edit_message_text(
+                            chat_id=chat_id, message_id=loading_id,
+                            text=f"{caption}\n\n📊 [Buka Chart]({chart_url})",
+                            parse_mode="Markdown"
+                        ))
+                        print("✅ Fallback link dikirim")
+                    except Exception as e:
+                        print(f"⚠️ fallback edit error: {e}")
+                return
 
-            # Hapus loading message
+            # Download OK — kirim foto. Kalau timeout, jangan kirim error
             try:
-                asyncio.run(bot.delete_message(chat_id=chat_id, message_id=loading_id))
-            except:
-                pass
+                asyncio.run(bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo_bytes,
+                    caption=caption,
+                    parse_mode="Markdown"
+                ))
+                print(f"✅ Chart {ticker} terkirim")
+
+                # Hapus loading
+                if loading_id:
+                    try:
+                        asyncio.run(bot.delete_message(chat_id=chat_id, message_id=loading_id))
+                    except:
+                        pass
+            except Exception as e:
+                print(f"⚠️ send_photo error: {e}")
+                # Coba fallback edit jadi link
+                if loading_id:
+                    try:
+                        asyncio.run(bot.edit_message_text(
+                            chat_id=chat_id, message_id=loading_id,
+                            text=f"{caption}\n\n📊 [Buka Chart]({chart_url})",
+                            parse_mode="Markdown"
+                        ))
+                    except:
+                        pass
             return
 
         # ========== ADD WATCHLIST ==========
@@ -916,6 +982,9 @@ def handle_callback(callback):
             ticker = parts[1].upper()
             answer("Menambahkan...")
 
+            # STEP 1: Ambil harga + tulis ke Gist
+            # Kalau berhasil, JANGAN kirim pesan gagal meski step 2 timeout
+            ref = None
             try:
                 import yfinance as yf
                 t = yf.Ticker(f"{ticker}.JK")
@@ -938,29 +1007,38 @@ def handle_callback(callback):
                     "panic_down": -15, "panic_up": 30
                 })
                 write_watchlist(watchlist)
-
-                reply_text(
-                    f"✅ *{ticker}* ditambahkan!\n\n"
-                    f"💰 Ref: Rp {ref:,.0f} (harga saat ini)\n"
-                    f"🔵 Watch: -5% / +10%\n"
-                    f"🟡 Action: -10% / +20%\n"
-                    f"🔴 Panic: -15% / +30%\n\n"
-                    f"_Ubah threshold:_\n"
-                    f"`/zone {ticker} watch -5 +10`"
-                )
+                print(f"✅ {ticker} tertulis ke Gist, ref Rp {ref:,.0f}")
             except Exception as e:
-                print(f"⚠️ callback add error: {e}")
+                print(f"⚠️ add error: {e}")
+                # Gagal di step ini = benar-benar gagal, kirim error
                 reply_text(f"⚠️ Gagal menambahkan *{ticker}*.")
+                return
+
+            # STEP 2: Kirim konfirmasi — kalau timeout, jangan kirim error
+            try:
+                asyncio.run(bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        f"✅ *{ticker}* ditambahkan!\n\n"
+                        f"💰 Ref: Rp {ref:,.0f} (harga saat ini)\n"
+                        f"🔵 Watch: -5% / +10%\n"
+                        f"🟡 Action: -10% / +20%\n"
+                        f"🔴 Panic: -15% / +30%\n\n"
+                        f"_Ubah threshold:_\n"
+                        f"`/zone {ticker} watch -5 +10`"
+                    ),
+                    parse_mode="Markdown"
+                ))
+                print(f"✅ Konfirmasi {ticker} terkirim")
+            except Exception as e:
+                print(f"⚠️ send konfirmasi error: {e}")
+                # Jangan kirim pesan error — Gist sudah tertulis
             return
 
         answer("Aksi tidak dikenal.")
 
     except Exception as e:
         print(f"❌ callback handler error: {e}")
-        try:
-            reply_text("❌ Terjadi kesalahan. Silakan coba lagi.")
-        except:
-            pass
 
 # ========== Webhook ==========
 @app.route("/api/webhook", methods=["POST"])
@@ -982,12 +1060,15 @@ def telegram_webhook():
     bot = Bot(BOT_TOKEN)
 
     def reply(t, keyboard=None):
-        asyncio.run(bot.send_message(
-            chat_id=msg.chat_id,
-            text=t,
-            parse_mode="Markdown",
-            reply_markup=keyboard
-        ))
+        try:
+            asyncio.run(bot.send_message(
+                chat_id=msg.chat_id,
+                text=t,
+                parse_mode="Markdown",
+                reply_markup=keyboard
+            ))
+        except Exception as e:
+            print(f"⚠️ reply error: {e}")
 
     try:
         if not text.startswith("/"):
@@ -999,6 +1080,9 @@ def telegram_webhook():
 
     except Exception as e:
         print(f"❌ handler error: {e}")
-        reply("❌ Terjadi kesalahan. Silakan coba lagi.")
+        try:
+            reply("❌ Terjadi kesalahan. Silakan coba lagi.")
+        except:
+            pass
 
     return jsonify({"ok": True}), 200

@@ -3,9 +3,7 @@ import json
 import asyncio
 import time
 import random
-import re
 import requests
-import yfinance as yf
 from flask import Flask, request, jsonify
 from telegram import Update, Bot
 
@@ -16,6 +14,12 @@ ALLOWED_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GIST_ID = os.environ.get("GIST_ID")
 GIST_TOKEN = os.environ.get("GIST_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+
+# Daftar model Gemini, urut prioritas
+GEMINI_MODELS = [
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
+]
 
 # ========== Fungsi baca/tulis Gist ==========
 def read_gist():
@@ -52,154 +56,6 @@ def find_item(watchlist, ticker):
             return item
     return None
 
-# ========== Fungsi Analisis Candlestick ==========
-def hitung_rsi(closes, period=14):
-    if len(closes) < period + 1:
-        return None
-    gains = []
-    losses = []
-    for i in range(1, len(closes)):
-        delta = closes[i] - closes[i-1]
-        gains.append(max(delta, 0))
-        losses.append(max(-delta, 0))
-
-    avg_gain = sum(gains[-period:]) / period
-    avg_loss = sum(losses[-period:]) / period
-
-    if avg_loss == 0:
-        return 100.0
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
-
-def deteksi_pola_candle(row):
-    o, h, l, c = row["Open"], row["High"], row["Low"], row["Close"]
-    body = abs(c - o)
-    range_total = h - l
-
-    if range_total == 0:
-        return []
-
-    pola = []
-    body_pct = body / range_total
-
-    if body_pct < 0.1:
-        pola.append("Doji (keraguan pasar)")
-
-    lower_shadow = min(o, c) - l
-    upper_shadow = h - max(o, c)
-    if lower_shadow > 2 * body and upper_shadow < body:
-        pola.append("Hammer (potensi reversal naik)")
-
-    if upper_shadow > 2 * body and lower_shadow < body:
-        pola.append("Shooting Star (potensi reversal turun)")
-
-    if body_pct > 0.9 and c > o:
-        pola.append("Marubozu Bullish (tekanan beli kuat)")
-
-    if body_pct > 0.9 and c < o:
-        pola.append("Marubozu Bearish (tekanan jual kuat)")
-
-    return pola
-
-def analisa_candlestick(ticker):
-    yf_ticker = f"{ticker}.JK"
-    try:
-        stock = yf.Ticker(yf_ticker)
-        hist = stock.history(period="3mo")
-
-        if hist.empty or len(hist) < 30:
-            return None
-
-        closes = hist["Close"].tolist()
-        highs = hist["High"].tolist()
-        lows = hist["Low"].tolist()
-        volumes = hist["Volume"].tolist()
-
-        current = closes[-1]
-        prev = closes[-2]
-        change_pct = (current - prev) / prev * 100
-
-        rsi = hitung_rsi(closes)
-
-        recent_30 = hist.tail(30)
-        support = recent_30["Low"].min()
-        resistance = recent_30["High"].max()
-
-        tr_values = []
-        for i in range(1, len(hist)):
-            tr = max(
-                highs[i] - lows[i],
-                abs(highs[i] - closes[i-1]),
-                abs(lows[i] - closes[i-1])
-            )
-            tr_values.append(tr)
-        atr = sum(tr_values[-14:]) / 14 if len(tr_values) >= 14 else None
-
-        avg_vol_20 = sum(volumes[-20:]) / 20
-        vol_ratio = volumes[-1] / avg_vol_20 if avg_vol_20 > 0 else 1
-
-        last_row = hist.iloc[-1]
-        pola = deteksi_pola_candle(last_row)
-
-        ma5 = sum(closes[-5:]) / 5
-        ma20 = sum(closes[-20:]) / 20
-        if ma5 > ma20 * 1.02:
-            tren = "Naik (uptrend)"
-        elif ma5 < ma20 * 0.98:
-            tren = "Turun (downtrend)"
-        else:
-            tren = "Sideways"
-
-        return {
-            "ticker": ticker,
-            "current": current,
-            "change_pct": change_pct,
-            "rsi": rsi,
-            "support": support,
-            "resistance": resistance,
-            "atr": atr,
-            "vol_ratio": vol_ratio,
-            "tren": tren,
-            "pola": pola,
-            "ma5": ma5,
-            "ma20": ma20,
-        }
-
-    except Exception as e:
-        print(f"⚠️ Error analisa {ticker}: {e}")
-        return None
-
-def format_analisa(hasil):
-    if not hasil:
-        return "⚠️ Gagal menganalisis. Cek kode saham atau coba lagi nanti."
-
-    r = hasil
-    rsi_val = r["rsi"] if r["rsi"] else 0
-
-    if rsi_val >= 70:
-        rsi_label = "Overbought (hati-hati)"
-    elif rsi_val <= 30:
-        rsi_label = "Oversold (potensi naik)"
-    else:
-        rsi_label = "Netral"
-
-    atr_str = f"Rp {r['atr']:,.0f}" if r["atr"] else "N/A"
-    pola_str = "\n".join(f"  • {p}" for p in r["pola"]) if r["pola"] else "  • Tidak ada pola signifikan"
-
-    return (
-        f"📊 *ANALISIS {r['ticker']}*\n\n"
-        f"💰 Harga: Rp {r['current']:,.0f} ({r['change_pct']:+.2f}%)\n"
-        f"📈 Tren: {r['tren']}\n\n"
-        f"*Indikator Teknikal:*\n"
-        f"• RSI (14): {rsi_val:.1f} — {rsi_label}\n"
-        f"• Support: Rp {r['support']:,.0f}\n"
-        f"• Resistance: Rp {r['resistance']:,.0f}\n"
-        f"• ATR: {atr_str}/hari\n"
-        f"• Volume hari ini: {r['vol_ratio']:.2f}x rata-rata\n\n"
-        f"*Pola Candle Hari Terakhir:*\n{pola_str}\n\n"
-        f"⚠️ _Analisis teknikal, bukan rekomendasi investasi._"
-    )
-
 # ========== Format watchlist jadi teks ==========
 def format_watchlist(watchlist):
     if not watchlist:
@@ -214,8 +70,8 @@ def format_watchlist(watchlist):
         )
     return "\n".join(lines)
 
-# ========== Tanya Gemini (dengan retry) ==========
-def tanya_gemini(pesan_user: str, watchlist: list, max_retries: int = 3) -> dict:
+# ========== Tanya Gemini (dengan fallback model + retry) ==========
+def tanya_gemini(pesan_user: str, watchlist: list) -> dict:
     prompt = f"""Kamu adalah asisten bot saham. Pengguna mengirim pesan dalam bahasa Indonesia (bisa formal, santai, atau campur Inggris).
 
 Pesan pengguna: "{pesan_user}"
@@ -239,7 +95,6 @@ Aturan:
 - Kalau pengguna minta ubah threshold tapi tidak sebut zona, tanya zona mana
 """
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={GEMINI_API_KEY}"
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -249,35 +104,44 @@ Aturan:
     }
 
     last_error = None
-    for attempt in range(max_retries):
-        try:
-            r = requests.post(url, json=payload, timeout=20)
 
-            if r.status_code == 200:
-                teks = r.json()["candidates"][0]["content"]["parts"][0]["text"]
-                return json.loads(teks)
+    for model in GEMINI_MODELS:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
 
-            if r.status_code in (429, 500, 503):
-                last_error = f"Gemini error {r.status_code}"
-                if attempt < max_retries - 1:
-                    delay = (2 ** attempt) + random.uniform(0, 1)
-                    print(f"⚠️ Gemini {r.status_code}, retry dalam {delay:.1f}s...")
-                    time.sleep(delay)
+        for attempt in range(2):
+            try:
+                print(f"🤖 Mencoba {model} (attempt {attempt+1})...")
+                r = requests.post(url, json=payload, timeout=20)
+
+                if r.status_code == 200:
+                    teks = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+                    print(f"✅ Berhasil pakai {model}")
+                    return json.loads(teks)
+
+                if r.status_code == 404:
+                    print(f"⚠️ {model} tidak tersedia, skip.")
+                    last_error = f"{model} tidak ditemukan"
+                    break
+
+                if r.status_code in (429, 500, 503):
+                    last_error = f"{model} error {r.status_code}"
+                    print(f"⚠️ {model} {r.status_code}, coba lagi...")
+                    if attempt < 1:
+                        delay = 1 + random.uniform(0, 1)
+                        time.sleep(delay)
+                        continue
+                    break
+
+                raise Exception(f"Gemini error: {r.status_code} {r.text[:200]}")
+
+            except requests.exceptions.Timeout:
+                last_error = f"{model} timeout"
+                if attempt < 1:
+                    time.sleep(1)
                     continue
-                raise Exception(f"Gemini error {r.status_code}: {r.text[:200]}")
+                break
 
-            raise Exception(f"Gemini error: {r.status_code} {r.text[:200]}")
-
-        except requests.exceptions.Timeout:
-            last_error = "Timeout"
-            if attempt < max_retries - 1:
-                delay = (2 ** attempt) + random.uniform(0, 1)
-                print(f"⚠️ Gemini timeout, retry dalam {delay:.1f}s...")
-                time.sleep(delay)
-                continue
-            raise Exception("Gemini timeout setelah beberapa kali percobaan.")
-
-    raise Exception(f"Gemini gagal setelah {max_retries} percobaan: {last_error}")
+    raise Exception(f"Semua model gagal. Error terakhir: {last_error}")
 
 # ========== Eksekusi aksi dari Gemini ==========
 def eksekusi_aksi(aksi: dict, watchlist: list) -> str:
@@ -366,30 +230,18 @@ def telegram_webhook():
                     "• \"tambahkan BBCA di 5500\"\n"
                     "• \"lihat watchlist saya\"\n"
                     "• \"ubah harga acuan BBCA jadi 5800\"\n"
-                    "• \"hapus BBRI\"\n"
-                    "• \"analisa BBCA\"\n\n"
+                    "• \"hapus BBRI\"\n\n"
                     "*Atau pakai command:*\n"
                     "/list — lihat watchlist\n"
                     "/add TICKER REF\n"
                     "/remove TICKER\n"
                     "/set TICKER ref PRICE\n"
-                    "/set TICKER watch -5 +10\n"
-                    "/analisa TICKER — analisis teknikal"
+                    "/set TICKER watch -5 +10"
                 )
                 return jsonify({"ok": True}), 200
 
             if text.startswith("/list"):
                 reply(format_watchlist(read_gist()))
-                return jsonify({"ok": True}), 200
-
-            if text.startswith("/analisa") or text.startswith("/analisis"):
-                parts = text.split()
-                if len(parts) != 2:
-                    reply("Format: `/analisa TICKER`\nContoh: `/analisa BBCA`")
-                    return jsonify({"ok": True}), 200
-                ticker = parts[1].upper()
-                hasil = analisa_candlestick(ticker)
-                reply(format_analisa(hasil))
                 return jsonify({"ok": True}), 200
 
             if text.startswith("/add"):
@@ -462,14 +314,6 @@ def telegram_webhook():
                 return jsonify({"ok": True}), 200
 
             reply("Perintah tidak dikenal. Kirim /start untuk bantuan.")
-            return jsonify({"ok": True}), 200
-
-        # ========== Deteksi perintah analisa dalam bahasa natural ==========
-        match = re.search(r"\b(analisa|analisis|cek teknikal|candle)\s+([A-Z]{4})\b", text.upper())
-        if match:
-            ticker = match.group(2)
-            hasil = analisa_candlestick(ticker)
-            reply(format_analisa(hasil))
             return jsonify({"ok": True}), 200
 
         # ========== Natural language (bukan command) ==========

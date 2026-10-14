@@ -1,6 +1,4 @@
-Baik, ini `README.md` final yang **sudah disesuaikan** dengan `webhook.py` versi terbaru (tanpa fitur riwayat).
-
-### `README.md` Final
+### `README.md`
 
 ```markdown
 # 📈 Saham Monitor

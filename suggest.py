@@ -1,19 +1,13 @@
 import os
+import json
+import time
+import random
 import requests
 import yfinance as yf
 from datetime import datetime
 
-# ========== Kandidat saham yang dipantau ==========
-CANDIDATES = [
-    "BBCA",  # Bank Central Asia
-    "BBRI",  # Bank Rakyat Indonesia
-    "BMRI",  # Bank Mandiri
-    "TLKM",  # Telkom Indonesia
-    "ASII",  # Astra International
-    "UNVR",  # Unilever Indonesia
-    "ICBP",  # Indofood CBP
-    "INDF",  # Indofood Sukses Makmur
-]
+GIST_ID_ALL_STOCKS = os.environ.get("GIST_ID_ALL_STOCKS")
+GIST_TOKEN = os.environ.get("GIST_TOKEN")
 
 def send_telegram(message: str):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -35,13 +29,86 @@ def send_telegram(message: str):
     except Exception as e:
         print(f"❌ Telegram error: {e}")
 
-def analyze_stock(ticker: str):
-    """Ambil data fundamental + teknikal sederhana."""
+def load_all_stocks():
+    """Baca daftar saham dari Gist. Return list of dict."""
+    if not GIST_ID_ALL_STOCKS:
+        raise Exception("GIST_ID_ALL_STOCKS tidak diatur")
+
+    url = f"https://api.github.com/gists/{GIST_ID_ALL_STOCKS}"
+    headers = {"Accept": "application/vnd.github+json"}
+    if GIST_TOKEN:
+        headers["Authorization"] = f"Bearer {GIST_TOKEN}"
+
+    r = requests.get(url, headers=headers, timeout=10)
+    if r.status_code != 200:
+        raise Exception(f"Gagal baca all_stocks.json: {r.status_code}")
+
+    content = r.json()["files"]["all_stocks.json"]["content"]
+    data = json.loads(content)
+
+    stocks = []
+    for item in data:
+        if isinstance(item, dict):
+            stocks.append(item)
+        elif isinstance(item, str):
+            stocks.append({"ticker": item, "name": item})
+    return stocks
+
+def quick_filter(stock: dict):
+    """Filter cepat: 1 panggilan yfinance per saham. Return dict atau None."""
+    ticker = stock["ticker"]
     yf_ticker = f"{ticker}.JK"
+
     try:
-        stock = yf.Ticker(yf_ticker)
-        info = stock.info
-        hist = stock.history(period="1y")
+        t = yf.Ticker(yf_ticker)
+        hist = t.history(period="3mo")
+
+        if hist.empty or len(hist) < 50:
+            return None
+
+        current = float(hist["Close"].iloc[-1])
+        ma50 = float(hist["Close"].tail(50).mean())
+        high_52w = float(hist["High"].max())
+        low_52w = float(hist["Low"].min())
+
+        # Skor cepat
+        score = 0
+
+        # Harga di bawah MA50 = peluang beli
+        if current < ma50:
+            score += 20
+
+        # Harga dekat 52w low
+        if high_52w > low_52w:
+            pos = (current - low_52w) / (high_52w - low_52w)
+            if pos < 0.3:
+                score += 20
+            elif pos < 0.5:
+                score += 10
+
+        # Minimal skor 20 untuk lolos ke tahap 2
+        if score < 20:
+            return None
+
+        return {
+            "ticker": ticker,
+            "name": stock["name"],
+            "quick_score": score,
+            "current": current,
+        }
+    except Exception as e:
+        print(f"   ⚠️ Quick filter gagal untuk {ticker}: {e}")
+        return None
+
+def deep_analyze(stock: dict):
+    """Analisis mendalam: PE, PBV, dividend, 52w range."""
+    ticker = stock["ticker"]
+    yf_ticker = f"{ticker}.JK"
+
+    try:
+        t = yf.Ticker(yf_ticker)
+        info = t.info
+        hist = t.history(period="1y")
 
         if hist.empty or len(hist) < 30:
             return None
@@ -49,25 +116,41 @@ def analyze_stock(ticker: str):
         current = float(hist["Close"].iloc[-1])
         high_52w = float(hist["High"].max())
         low_52w = float(hist["Low"].min())
-        ma50 = float(hist["Close"].tail(50).mean()) if len(hist) >= 50 else current
+        ma50 = float(hist["Close"].tail(50).mean())
 
         pe = info.get("trailingPE") or info.get("forwardPE")
         pbv = info.get("priceToBook")
         div_yield = info.get("dividendYield")
-        name = info.get("shortName") or ticker
+        div_pct = None
+        if div_yield is not None:
+            div_pct = div_yield * 100 if div_yield < 1 else div_yield
 
+        # Zona beli
         buy_low = round(low_52w * 1.02, 0)
         buy_high = round(ma50, 0)
         upper = round(high_52w * 1.10, 0)
         lower = round(low_52w * 0.95, 0)
 
-        div_pct = None
-        if div_yield is not None:
-            div_pct = div_yield * 100 if div_yield < 1 else div_yield
+        # Skor
+        score = 50
+        if pe and pe > 0:
+            if pe < 10: score += 20
+            elif pe < 15: score += 10
+            elif pe > 25: score -= 15
+        if pbv and pbv > 0:
+            if pbv < 1.5: score += 10
+            elif pbv > 4: score -= 10
+        if div_pct:
+            if div_pct > 5: score += 15
+            elif div_pct > 3: score += 8
+        if high_52w > low_52w:
+            pos = (current - low_52w) / (high_52w - low_52w)
+            if pos < 0.3: score += 10
+            elif pos > 0.8: score -= 10
 
         return {
             "ticker": ticker,
-            "name": name,
+            "name": stock["name"],
             "current": current,
             "pe": pe,
             "pbv": pbv,
@@ -76,77 +159,67 @@ def analyze_stock(ticker: str):
             "buy_high": buy_high,
             "upper": upper,
             "lower": lower,
-            "high_52w": high_52w,
-            "low_52w": low_52w,
+            "score": max(0, min(100, score)),
         }
     except Exception as e:
-        print(f"⚠️ Error analisis {ticker}: {e}")
+        print(f"   ⚠️ Deep analyze gagal untuk {ticker}: {e}")
         return None
 
-def score_stock(r: dict) -> int:
-    """Skor sederhana 0-100 berdasarkan valuasi."""
-    score = 50
-
-    if r["pe"] and r["pe"] > 0:
-        if r["pe"] < 10:
-            score += 20
-        elif r["pe"] < 15:
-            score += 10
-        elif r["pe"] > 25:
-            score -= 15
-
-    if r["pbv"] and r["pbv"] > 0:
-        if r["pbv"] < 1.5:
-            score += 10
-        elif r["pbv"] > 4:
-            score -= 10
-
-    if r["div_pct"]:
-        if r["div_pct"] > 5:
-            score += 15
-        elif r["div_pct"] > 3:
-            score += 8
-
-    if r["current"] and r["low_52w"]:
-        pos = (r["current"] - r["low_52w"]) / (r["high_52w"] - r["low_52w"])
-        if pos < 0.3:
-            score += 10
-        elif pos > 0.8:
-            score -= 10
-
-    return max(0, min(100, score))
-
 def main():
-    print("📊 Mulai scan rekomendasi jangka panjang...")
-    results = []
+    print(f"📊 Mulai screening {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
-    for ticker in CANDIDATES:
-        print(f"🔍 Analisis {ticker}...")
-        r = analyze_stock(ticker)
-        if r:
-            r["score"] = score_stock(r)
-            results.append(r)
-            print(f"   {r['name']}: Rp {r['current']:,.0f} (skor: {r['score']})")
+    stocks = load_all_stocks()
+    print(f"📋 Total saham di database: {len(stocks)}")
 
-    if not results:
-        print("⚠️ Tidak ada hasil analisis")
+    # Tahap 1: filter cepat
+    print("\n🔍 Tahap 1: filter cepat...")
+    candidates = []
+    for i, stock in enumerate(stocks):
+        print(f"   [{i+1}/{len(stocks)}] {stock['ticker']}...")
+        result = quick_filter(stock)
+        if result:
+            candidates.append(result)
+        time.sleep(0.3)  # hindari rate limit
+
+    print(f"\n✅ Lolos filter cepat: {len(candidates)} saham")
+
+    if not candidates:
+        send_telegram("📊 Tidak ada saham yang lolos filter hari ini.")
         return
 
-    results.sort(key=lambda x: x["score"], reverse=True)
+    # Ambil top 20 berdasarkan quick_score
+    candidates.sort(key=lambda x: x["quick_score"], reverse=True)
+    top_candidates = candidates[:20]
+    print(f"🔍 Tahap 2: analisis mendalam {len(top_candidates)} kandidat...")
 
+    # Tahap 2: analisis mendalam
+    analyzed = []
+    for i, c in enumerate(top_candidates):
+        print(f"   [{i+1}/{len(top_candidates)}] {c['ticker']}...")
+        result = deep_analyze(c)
+        if result:
+            analyzed.append(result)
+        time.sleep(0.5)
+
+    if not analyzed:
+        send_telegram("📊 Tidak ada saham yang layak direkomendasikan hari ini.")
+        return
+
+    # Urutkan berdasarkan skor, ambil Top 5
+    analyzed.sort(key=lambda x: x["score"], reverse=True)
+    top5 = analyzed[:5]
+
+    # Susun pesan
     tanggal = datetime.now().strftime("%d %b %Y")
-    lines = [f"📈 *REKOMENDASI JANGKA PANJANG* — {tanggal}\n"]
+    lines = [f"📈 *REKOMENDASI TOP 5* — {tanggal}\n"]
 
-    for r in results:
+    for r in top5:
         if r["score"] >= 70:
             emoji = "🟢"
-            label = "Menarik"
         elif r["score"] >= 55:
             emoji = "🟡"
-            label = "Netral"
         else:
             emoji = "🔴"
-            label = "Hati-hati"
 
         pe_str = f"{r['pe']:.1f}" if r["pe"] else "N/A"
         pbv_str = f"{r['pbv']:.2f}" if r["pbv"] else "N/A"
@@ -159,13 +232,13 @@ def main():
             f"🟢 Zona beli: Rp {r['buy_low']:,.0f} – Rp {r['buy_high']:,.0f}\n"
             f"🔴 Batas bawah: Rp {r['lower']:,.0f}\n"
             f"🎯 Batas atas: Rp {r['upper']:,.0f}\n"
-            f"⭐ Skor: {r['score']}/100 ({label})\n"
+            f"⭐ Skor: {r['score']}/100\n"
         )
 
-    lines.append("_Bukan rekomendasi investasi. Selalu cek fundamental dan laporan keuangan._")
-    message = "\n".join(lines)
+    lines.append(f"_Dari {len(stocks)} saham, {len(analyzed)} lolos analisis._")
+    lines.append("_Bukan rekomendasi investasi._")
 
-    send_telegram(message)
+    send_telegram("\n".join(lines))
     print("✅ Rekomendasi terkirim")
 
 if __name__ == "__main__":
